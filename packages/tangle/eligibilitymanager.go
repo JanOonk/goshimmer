@@ -3,7 +3,9 @@ package tangle
 import (
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/goshimmer/packages/ledgerstate"
+	"github.com/iotaledger/hive.go/byteutils"
 	"github.com/iotaledger/hive.go/events"
+	"github.com/iotaledger/hive.go/marshalutil"
 	"github.com/iotaledger/hive.go/objectstorage"
 )
 
@@ -41,6 +43,8 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	}
 
 	for _, dependencyTxID := range pendingDependencies {
+		unconfirmedTxDependenciesStorage := e.tangle.Storage.unconfirmedTxDependenciesStorage
+		unconfirmedTxDependenciesStorage.Put(dependencyTxID).
 		// TODO
 	}
 	return nil
@@ -63,7 +67,7 @@ func obtainPendingDependencies(tx *ledgerstate.Transaction, utxoDAG *ledgerstate
 	return pendingDependencies, nil
 }
 
-func NewEligibilityManager(tangle *Tangle) {
+func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManager) {
 	eligibilityManager = &EligibilityManager{
 		Events: &EligibilityEvents{
 			MessageEligible: events.NewEvent(),
@@ -72,6 +76,8 @@ func NewEligibilityManager(tangle *Tangle) {
 
 		tangle: tangle,
 	}
+
+	return
 }
 
 // Setup sets up the behavior of the component by making it attach to the relevant events of other components.
@@ -82,10 +88,38 @@ func (e *EligibilityManager) Setup() {
 		}
 	}))
 }
-
 func UnconfirmedTxDependenciesStorage(key, data []byte) (result objectstorage.StorableObject, err error) {
-	// TODO
-	return nil, nil
+	if result, _, err = unconfirmedTxDependencyFromBytes(byteutils.ConcatBytes(key, data)); err != nil {
+		err = errors.Errorf("failed to parse UncomfirmedTxDependencyFromByte from bytes: %w", err)
+		return
+	}
+
+	return
+}
+
+func unconfirmedTxDependencyFromBytes(bytes []byte) (unconfirmedTxDependency *UnconfirmedTxDependency,
+	consumedBytes int, err error) {
+	marshalUtil := marshalutil.New(bytes)
+
+	txID, err := ledgerstate.TransactionIDFromMarshalUtil(marshalUtil)
+	if err != nil {
+		err = errors.Errorf("failed to parse TransactionID from MarshalUtil: %w", err)
+		return
+	}
+	txDependencies, err := ledgerstate.TransactionIDsFromMarshalUtil(marshalUtil)
+	if err != nil {
+		err = errors.Errorf("failed to parse TransactionIDs from MarshalUtil: %w", err)
+		return
+	}
+
+	unconfirmedTxDependency = &UnconfirmedTxDependency {
+		txID: txID,
+		txDependencies: txDependencies,
+	}
+
+	consumedBytes = marshalUtil.ReadOffset()
+
+	return
 }
 
 func Setup() {

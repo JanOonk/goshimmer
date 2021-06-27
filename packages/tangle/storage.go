@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/iotaledger/hive.go/types"
+
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/hive.go/byteutils"
 	"github.com/iotaledger/hive.go/cerrors"
@@ -55,6 +57,9 @@ const (
 
 	// PrefixMarkerMessageMapping defines the storage prefix for the MarkerMessageMapping.
 	PrefixMarkerMessageMapping
+
+	// PrefixUnconfirmedTxDependencies defines the storage prefix for the
+	PrefixUnconfirmedTxDependencies
 
 	// DBSequenceNumber defines the db sequence number.
 	DBSequenceNumber = "seq"
@@ -1045,6 +1050,45 @@ func (m *MissingMessage) ObjectStorageValue() (result []byte) {
 	}
 
 	return
+}
+
+// region UnconfirmedTxDependency //////////////////////////////////////////////////////////////////////////////////////
+
+// UnconfirmedTxDependency maps a transaction to all of the transactions that create its inputs which are not yet confirmed
+type UnconfirmedTxDependency struct {
+	objectstorage.StorableObjectFlags
+
+	txID           ledgerstate.TransactionID
+	txDependencies ledgerstate.TransactionIDs
+}
+
+// NewUnconfirmedTxDependency creates an empty mapping for txID
+func NewUnconfirmedTxDependency(txID ledgerstate.TransactionID) *UnconfirmedTxDependency {
+	return &UnconfirmedTxDependency{
+		txID:           txID,
+		txDependencies: make(ledgerstate.TransactionIDs, 0),
+	}
+}
+
+// AddDependency adds a transaction id dependency
+func (u *UnconfirmedTxDependency) AddDependency(txID ledgerstate.TransactionID) {
+	u.txDependencies[txID] = types.Void
+}
+
+func (u *UnconfirmedTxDependency) Update(other objectstorage.StorableObject) {
+	panic("implement me")
+}
+
+func (u *UnconfirmedTxDependency) ObjectStorageKey() []byte {
+	return u.txID.Bytes()
+}
+
+func (u *UnconfirmedTxDependency) ObjectStorageValue() []byte {
+	marshalUtil := marshalutil.New(ledgerstate.TransactionIDLength * len(u.txDependencies))
+	for dependency := range u.txDependencies {
+		marshalUtil.WriteBytes(dependency.Bytes())
+	}
+	return marshalUtil.Bytes()
 }
 
 // endregion ///////////////////////////////////////////////////////////////////////////////////////////////////////////
