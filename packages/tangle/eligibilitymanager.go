@@ -44,7 +44,7 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 
 	for _, dependencyTxID := range pendingDependencies {
 		unconfirmedTxDependenciesStorage := e.tangle.Storage.unconfirmedTxDependenciesStorage
-		unconfirmedTxDependenciesStorage.Put(dependencyTxID).
+		unconfirmedTxDependenciesStorage.Load(dependencyTxID.Bytes())
 		// TODO
 	}
 	return nil
@@ -88,6 +88,7 @@ func (e *EligibilityManager) Setup() {
 		}
 	}))
 }
+
 func UnconfirmedTxDependenciesStorage(key, data []byte) (result objectstorage.StorableObject, err error) {
 	if result, _, err = unconfirmedTxDependencyFromBytes(byteutils.ConcatBytes(key, data)); err != nil {
 		err = errors.Errorf("failed to parse UncomfirmedTxDependencyFromByte from bytes: %w", err)
@@ -112,8 +113,8 @@ func unconfirmedTxDependencyFromBytes(bytes []byte) (unconfirmedTxDependency *Un
 		return
 	}
 
-	unconfirmedTxDependency = &UnconfirmedTxDependency {
-		txID: txID,
+	unconfirmedTxDependency = &UnconfirmedTxDependency{
+		txID:           txID,
 		txDependencies: txDependencies,
 	}
 
