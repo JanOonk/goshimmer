@@ -227,6 +227,20 @@ func (s *Storage) MissingMessages() (ids []MessageID) {
 	return
 }
 
+// StoreUnconfirmedTransactionDependencies stores the dependencieds
+func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *UnconfirmedTxDependency) *CachedUnconfirmedTxDependency {
+	cachedDependecies := s.unconfirmedTxDependenciesStorage.Store(dependencies)
+	return &CachedUnconfirmedTxDependency{CachedObject: cachedDependecies}
+}
+
+func (s *Storage) UnconfirmedTransactionDependencies(transactionID ledgerstate.TransactionID) (cachedDependencies CachedUnconfirmedTxDependency) {
+	s.unconfirmedTxDependenciesStorage.ForEach(func(key []byte, cachedObject objectstorage.CachedObject) bool {
+		cachedDependencies = CachedUnconfirmedTxDependency{CachedObject: cachedObject}
+		return true
+	}, objectstorage.WithIteratorPrefix(transactionID.Bytes()))
+	return
+}
+
 // StoreAttachment stores a new attachment if not already stored.
 func (s *Storage) StoreAttachment(transactionID ledgerstate.TransactionID, messageID MessageID) (cachedAttachment *CachedAttachment, stored bool) {
 	attachment, stored := s.attachmentStorage.StoreIfAbsent(NewAttachment(transactionID, messageID))
