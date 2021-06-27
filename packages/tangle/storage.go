@@ -3,6 +3,7 @@ package tangle
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/iotaledger/hive.go/types"
@@ -1129,6 +1130,7 @@ type UnconfirmedTxDependency struct {
 
 	txID           ledgerstate.TransactionID
 	txDependencies ledgerstate.TransactionIDs
+	mutex          sync.RWMutex
 }
 
 // NewUnconfirmedTxDependency creates an empty mapping for txID
@@ -1141,6 +1143,17 @@ func NewUnconfirmedTxDependency(txID ledgerstate.TransactionID) *UnconfirmedTxDe
 
 // AddDependency adds a transaction id dependency
 func (u *UnconfirmedTxDependency) AddDependency(txID ledgerstate.TransactionID) {
+	u.mutex.Lock()
+	defer u.mutex.Unlock()
+
+	u.txDependencies[txID] = types.Void
+}
+
+// DeleteDependency deletes a transaction id dependency
+func (u *UnconfirmedTxDependency) DeleteDependency(txID ledgerstate.TransactionID) {
+	u.mutex.Lock()
+	defer u.mutex.Unlock()
+
 	u.txDependencies[txID] = types.Void
 }
 
@@ -1149,10 +1162,16 @@ func (u *UnconfirmedTxDependency) Update(other objectstorage.StorableObject) {
 }
 
 func (u *UnconfirmedTxDependency) ObjectStorageKey() []byte {
+	u.mutex.RLock()
+	defer u.mutex.RUnlock()
+
 	return u.txID.Bytes()
 }
 
 func (u *UnconfirmedTxDependency) ObjectStorageValue() []byte {
+	u.mutex.RLock()
+	defer u.mutex.RUnlock()
+
 	marshalUtil := marshalutil.New(ledgerstate.TransactionIDLength * len(u.txDependencies))
 	for dependency := range u.txDependencies {
 		marshalUtil.WriteBytes(dependency.Bytes())
