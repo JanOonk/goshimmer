@@ -234,7 +234,7 @@ func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *Unconfir
 	return &CachedUnconfirmedTxDependency{CachedObject: cachedDependecies}
 }
 
-func (s *Storage) UnconfirmedTransactionDependencies(transactionID ledgerstate.TransactionID) (cachedDependencies CachedUnconfirmedTxDependency) {
+func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (cachedDependencies CachedUnconfirmedTxDependency) {
 	s.unconfirmedTxDependenciesStorage.ForEach(func(key []byte, cachedObject objectstorage.CachedObject) bool {
 		cachedDependencies = CachedUnconfirmedTxDependency{CachedObject: cachedObject}
 		return true
@@ -1134,9 +1134,9 @@ type UnconfirmedTxDependency struct {
 }
 
 // NewUnconfirmedTxDependency creates an empty mapping for txID
-func NewUnconfirmedTxDependency(txID ledgerstate.TransactionID) *UnconfirmedTxDependency {
+func NewUnconfirmedTxDependency(txID *ledgerstate.TransactionID) *UnconfirmedTxDependency {
 	return &UnconfirmedTxDependency{
-		txID:           txID,
+		txID:           *txID,
 		txDependencies: make(ledgerstate.TransactionIDs, 0),
 	}
 }

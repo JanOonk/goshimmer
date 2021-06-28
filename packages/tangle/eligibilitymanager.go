@@ -10,7 +10,7 @@ import (
 )
 
 type EligibilityEvents = struct {
-	// MessageEligible is triggered when messege eligible flag is set to true
+	// MessageEligible is triggered when message eligible flag is set to true
 	MessageEligible *events.Event
 	Error           *events.Event
 }
@@ -28,7 +28,9 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	message := cachedMsg.Unwrap()
 	payloadType := message.Payload().Type()
 	if payloadType != ledgerstate.TransactionType {
-		setEligible(message)
+		e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+			messageMetadata.SetEligible(true)
+		})
 		return nil
 	}
 
@@ -38,14 +40,27 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 		return errors.Errorf("failed to get pending transaction's dependencies: %w", err)
 	}
 	if len(pendingDependencies) == 0 {
-		setEligible(message)
+		e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+			messageMetadata.SetEligible(true)
+		})
 		return nil
 	}
 
 	for _, dependencyTxID := range pendingDependencies {
-		unconfirmedTxDependenciesStorage := e.tangle.Storage.unconfirmedTxDependenciesStorage
-		unconfirmedTxDependenciesStorage.Load(dependencyTxID.Bytes())
-		// TODO
+		storage := e.tangle.Storage
+		cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID)
+		consumed := cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
+			unconfirmedTxDependency.AddDependency(tx.ID())
+		})
+		if !consumed {
+			txDependency := NewUnconfirmedTxDependency(dependencyTxID)
+			txDependency.AddDependency(tx.ID())
+			cachedDependency := storage.StoreUnconfirmedTransactionDependencies(txDependency)
+			if cachedDependency == nil {
+				return errors.Errorf("failed to store dependency, txID: %s", tx.ID())
+			}
+			cachedDependency.Release()
+		}
 	}
 	return nil
 }
@@ -87,6 +102,8 @@ func (e *EligibilityManager) Setup() {
 			e.Events.Error.Trigger(errors.Errorf("failed to check eligibility of message %s. %w", messageID, err))
 		}
 	}))
+
+	// TODO attach to transactionconfirmed event
 }
 
 func UnconfirmedTxDependenciesStorage(key, data []byte) (result objectstorage.StorableObject, err error) {
