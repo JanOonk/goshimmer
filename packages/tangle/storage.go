@@ -112,7 +112,7 @@ func NewStorage(tangle *Tangle) (storage *Storage) {
 		statementStorage:                  osFactory.New(PrefixStatement, StatementFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 		branchWeightStorage:               osFactory.New(PrefixBranchWeight, BranchWeightFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 		markerMessageMappingStorage:       osFactory.New(PrefixMarkerMessageMapping, MarkerMessageMappingFromObjectStorage, cacheProvider.CacheTime(cacheTime), MarkerMessageMappingPartitionKeys),
-		unconfirmedTxDependenciesStorage:  osFactory.New(PrefixUnconfirmedTxDependencies, UnconfirmedTxDependenciesStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
+		unconfirmedTxDependenciesStorage:  osFactory.New(PrefixUnconfirmedTxDependencies, UnconfirmedTxDependenciesFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 
 		Events: &StorageEvents{
 			MessageStored:        events.NewEvent(MessageIDCaller),
@@ -228,10 +228,10 @@ func (s *Storage) MissingMessages() (ids []MessageID) {
 	return
 }
 
-// StoreUnconfirmedTransactionDependencies stores the dependencieds
+// StoreUnconfirmedTransactionDependencies stores the dependencies
 func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *UnconfirmedTxDependency) *CachedUnconfirmedTxDependency {
-	cachedDependecies := s.unconfirmedTxDependenciesStorage.Store(dependencies)
-	return &CachedUnconfirmedTxDependency{CachedObject: cachedDependecies}
+	cachedDependencies := s.unconfirmedTxDependenciesStorage.Store(dependencies)
+	return &CachedUnconfirmedTxDependency{CachedObject: cachedDependencies}
 }
 
 func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (cachedDependencies CachedUnconfirmedTxDependency) {
@@ -435,6 +435,10 @@ func (s *Storage) deleteStrongApprover(approvedMessageID MessageID, approvingMes
 // deleteWeakApprover deletes an Approver from the object storage that was created by a weak parent.
 func (s *Storage) deleteWeakApprover(approvedMessageID MessageID, approvingMessage MessageID) {
 	s.approverStorage.Delete(byteutils.ConcatBytes(approvedMessageID.Bytes(), WeakApprover.Bytes(), approvingMessage.Bytes()))
+}
+
+func (s *Storage) deleteUnconfirmedTxDependencies(transactionID *ledgerstate.TransactionID) {
+	s.unconfirmedTxDependenciesStorage.Delete(transactionID.Bytes())
 }
 
 // Shutdown marks the tangle as stopped, so it will not accept any new messages (waits for all backgroundTasks to finish).
@@ -1128,16 +1132,16 @@ func (c *CachedMissingMessage) String() string {
 type UnconfirmedTxDependency struct {
 	objectstorage.StorableObjectFlags
 
-	txID           ledgerstate.TransactionID
-	txDependencies ledgerstate.TransactionIDs
+	dependencyTxID ledgerstate.TransactionID
+	dependentTxIDs ledgerstate.TransactionIDs
 	mutex          sync.RWMutex
 }
 
 // NewUnconfirmedTxDependency creates an empty mapping for txID
 func NewUnconfirmedTxDependency(txID *ledgerstate.TransactionID) *UnconfirmedTxDependency {
 	return &UnconfirmedTxDependency{
-		txID:           *txID,
-		txDependencies: make(ledgerstate.TransactionIDs, 0),
+		dependencyTxID: *txID,
+		dependentTxIDs: make(ledgerstate.TransactionIDs, 0),
 	}
 }
 
@@ -1146,7 +1150,7 @@ func (u *UnconfirmedTxDependency) AddDependency(txID ledgerstate.TransactionID) 
 	u.mutex.Lock()
 	defer u.mutex.Unlock()
 
-	u.txDependencies[txID] = types.Void
+	u.dependentTxIDs[txID] = types.Void
 }
 
 // DeleteDependency deletes a transaction id dependency
@@ -1154,7 +1158,9 @@ func (u *UnconfirmedTxDependency) DeleteDependency(txID ledgerstate.TransactionI
 	u.mutex.Lock()
 	defer u.mutex.Unlock()
 
-	u.txDependencies[txID] = types.Void
+	if _, ok := u.dependentTxIDs[txID]; ok {
+		delete(u.dependentTxIDs, txID)
+	}
 }
 
 func (u *UnconfirmedTxDependency) Update(other objectstorage.StorableObject) {
@@ -1165,15 +1171,15 @@ func (u *UnconfirmedTxDependency) ObjectStorageKey() []byte {
 	u.mutex.RLock()
 	defer u.mutex.RUnlock()
 
-	return u.txID.Bytes()
+	return u.dependencyTxID.Bytes()
 }
 
 func (u *UnconfirmedTxDependency) ObjectStorageValue() []byte {
 	u.mutex.RLock()
 	defer u.mutex.RUnlock()
 
-	marshalUtil := marshalutil.New(ledgerstate.TransactionIDLength * len(u.txDependencies))
-	for dependency := range u.txDependencies {
+	marshalUtil := marshalutil.New(ledgerstate.TransactionIDLength * len(u.dependentTxIDs))
+	for dependency := range u.dependentTxIDs {
 		marshalUtil.WriteBytes(dependency.Bytes())
 	}
 	return marshalUtil.Bytes()

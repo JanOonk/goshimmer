@@ -9,113 +9,176 @@ import (
 	"github.com/iotaledger/hive.go/objectstorage"
 )
 
-type EligibilityEvents = struct {
+type EligibilityEvents struct {
 	// MessageEligible is triggered when message eligible flag is set to true
 	MessageEligible *events.Event
 	Error           *events.Event
 }
 
-type EligibilityManager = struct {
+type EligibilityManager struct {
 	Events *EligibilityEvents
 
 	tangle *Tangle
 }
 
+func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManager) {
+	eligibilityManager = &EligibilityManager{
+		Events: &EligibilityEvents{
+			MessageEligible: events.NewEvent(MessageIDCaller),
+			Error:           events.NewEvent(events.ErrorCaller),
+		},
+
+		tangle: tangle,
+	}
+	return
+}
+
+// checkEligibility checks if message cn be set to eligible. If yes, it set eligibility flag and triggers message eligible event.
+// If not it stores transactions dependencies to the object storage
 func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	cachedMsg := e.tangle.Storage.Message(messageID)
 	defer cachedMsg.Release()
 
 	message := cachedMsg.Unwrap()
 	payloadType := message.Payload().Type()
+	// data messages are eligible right after solidification
 	if payloadType != ledgerstate.TransactionType {
-		e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
-			messageMetadata.SetEligible(true)
-		})
+		e.SetEligibility(messageID)
 		return nil
 	}
 
 	tx := message.Payload().(*ledgerstate.Transaction)
-	pendingDependencies, err := obtainPendingDependencies(tx, e.tangle.LedgerState.UTXODAG)
+	pendingDependencies, err := e.obtainPendingDependencies(tx)
 	if err != nil {
 		return errors.Errorf("failed to get pending transaction's dependencies: %w", err)
 	}
+	// no pending dependencies left
 	if len(pendingDependencies) == 0 {
-		e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
-			messageMetadata.SetEligible(true)
-		})
+		e.SetEligibility(messageID)
 		return nil
 	}
 
-	for _, dependencyTxID := range pendingDependencies {
-		storage := e.tangle.Storage
-		cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID)
-		consumed := cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
-			unconfirmedTxDependency.AddDependency(tx.ID())
-		})
-		if !consumed {
-			txDependency := NewUnconfirmedTxDependency(dependencyTxID)
-			txDependency.AddDependency(tx.ID())
-			cachedDependency := storage.StoreUnconfirmedTransactionDependencies(txDependency)
-			if cachedDependency == nil {
-				return errors.Errorf("failed to store dependency, txID: %s", tx.ID())
-			}
-			cachedDependency.Release()
+	for dependencyTxID := range pendingDependencies {
+		err = e.storeMissingDependencies(tx.ID(), dependencyTxID)
+		if err != nil {
+			return errors.Errorf("failed to add missing dependencies: %w", err)
 		}
 	}
 	return nil
 }
 
-// obtainPendingDependencies return all transaction ids that are still pending confirmation that tx depends upon
-func obtainPendingDependencies(tx *ledgerstate.Transaction, utxoDAG *ledgerstate.UTXODAG) ([]*ledgerstate.TransactionID, error) {
-	pendingDependencies := make([]*ledgerstate.TransactionID, 0)
-	for _, input := range tx.Essence().Inputs() {
-		outputID := input.(*ledgerstate.UTXOInput).ReferencedOutputID()
-		txID := outputID.TransactionID()
-		state, err := utxoDAG.InclusionState(txID)
-		if err != nil {
-			return nil, errors.Errorf("failed to get inclusion state: %w", err)
+// storeMissingDependencies adds missing dependencies to the object storage
+// or append if already exist append dependent txID to the existing one
+func (e *EligibilityManager) storeMissingDependencies(dependentTxID ledgerstate.TransactionID, dependencyTxID *ledgerstate.TransactionID) error {
+	storage := e.tangle.Storage
+	cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID)
+	consumed := cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
+		unconfirmedTxDependency.AddDependency(dependentTxID)
+	})
+	if !consumed {
+		txDependency := NewUnconfirmedTxDependency(dependencyTxID)
+		txDependency.AddDependency(dependentTxID)
+		cachedDependency := storage.StoreUnconfirmedTransactionDependencies(txDependency)
+		if cachedDependency == nil {
+			return errors.Errorf("failed to store dependency, txID: %s", dependentTxID)
 		}
-		if state != ledgerstate.Confirmed {
-			pendingDependencies = append(pendingDependencies, &txID)
-		}
+		cachedDependency.Release()
 	}
-	return pendingDependencies, nil
+	return nil
 }
 
-func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManager) {
-	eligibilityManager = &EligibilityManager{
-		Events: &EligibilityEvents{
-			MessageEligible: events.NewEvent(),
-			Error:           events.NewEvent(events.ErrorCaller),
-		},
-
-		tangle: tangle,
-	}
-
-	return
+func (e *EligibilityManager) SetEligibility(messageID MessageID) {
+	e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+		messageMetadata.SetEligible(true)
+	})
+	e.Events.MessageEligible.Trigger(messageID)
 }
 
 // Setup sets up the behavior of the component by making it attach to the relevant events of other components.
 func (e *EligibilityManager) Setup() {
 	e.tangle.Solidifier.Events.MessageSolid.Attach(events.NewClosure(func(messageID MessageID) {
 		if err := e.checkEligibility(messageID); err != nil {
-			e.Events.Error.Trigger(errors.Errorf("failed to check eligibility of message %s. %w", messageID, err))
+			e.Events.Error.Trigger(errors.Errorf("failed to check eligibility of message %s. %w", messageID.Base58(), err))
 		}
 	}))
 
-	// TODO attach to transactionconfirmed event
+	e.tangle.LedgerState.UTXODAG.Events.TransactionConfirmed.Attach(events.NewClosure(func(transactionID *ledgerstate.TransactionID) {
+		if err := e.updateEligibilityAfterDependencyConfirmation(transactionID); err != nil {
+			e.Events.Error.Trigger(errors.Errorf("failed to update eligibility after tx %s was confirmed. %w", transactionID.Base58(), err))
+		}
+	}))
 }
 
-func UnconfirmedTxDependenciesStorage(key, data []byte) (result objectstorage.StorableObject, err error) {
-	if result, _, err = unconfirmedTxDependencyFromBytes(byteutils.ConcatBytes(key, data)); err != nil {
-		err = errors.Errorf("failed to parse UncomfirmedTxDependencyFromByte from bytes: %w", err)
+// updateEligibilityAfterDependencyConfirmation triggered on transaction confirmation event
+// remove unconfirmed dependency from object storage and checks if any of dependent transactions
+// can be set to eligible
+func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(dependencyTxID *ledgerstate.TransactionID) interface{} {
+	// get all txID dependent on this transactionID
+	cachedDependencies := e.tangle.Storage.UnconfirmedTransactionDependencies(dependencyTxID)
+
+	// tx that need to be checked for the eligibility after one of dependency has been confirmed
+	var dependentTxs = make([]*ledgerstate.Transaction, 0)
+	cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
+		// get tx from storage
+		for txID := range unconfirmedTxDependency.dependentTxIDs {
+			e.tangle.LedgerState.Transaction(txID).Consume(func(tx *ledgerstate.Transaction) {
+				dependentTxs = append(dependentTxs, tx)
+			})
+		}
+	})
+	e.tangle.Storage.deleteUnconfirmedTxDependencies(dependencyTxID)
+
+	for _, dependentTx := range dependentTxs {
+		pendingDependencies, err := e.obtainPendingDependencies(dependentTx)
+		if err != nil {
+			return errors.Errorf("failed to get pending transaction's dependencies: %w", err)
+		}
+		e.updateEligibility(dependentTx, pendingDependencies)
+
+	}
+	return nil
+}
+
+// obtainPendingDependencies return all transaction ids that are still pending confirmation that tx depends upon
+func (e *EligibilityManager) obtainPendingDependencies(tx *ledgerstate.Transaction) (map[*ledgerstate.TransactionID]struct{}, error) {
+	pendingDependencies := make(map[*ledgerstate.TransactionID]struct{})
+	for _, input := range tx.Essence().Inputs() {
+		outputID := input.(*ledgerstate.UTXOInput).ReferencedOutputID()
+		txID := outputID.TransactionID()
+		state, err := e.tangle.LedgerState.UTXODAG.InclusionState(txID)
+		if err != nil {
+			return nil, errors.Errorf("failed to get inclusion state: %w", err)
+		}
+		if state != ledgerstate.Confirmed {
+			pendingDependencies[&txID] = struct{}{}
+		}
+	}
+	return pendingDependencies, nil
+}
+
+// updateEligibility set eligibility to true for all transaction's attachments if all dependencies has been confirmed
+func (e *EligibilityManager) updateEligibility(dependentTx *ledgerstate.Transaction, dependencies map[*ledgerstate.TransactionID]struct{}) {
+	if len(dependencies) == 0 {
+		// set eligible all tx dependent attachments
+		messageIDs := e.tangle.Storage.AttachmentMessageIDs(dependentTx.ID())
+		for _, messageID := range messageIDs {
+			e.SetEligibility(messageID)
+		}
+	}
+}
+
+// UnconfirmedTxDependenciesFromObjectStorage restores an UnconfirmedTxDependency object that was stored in the ObjectStorage.
+func UnconfirmedTxDependenciesFromObjectStorage(key, data []byte) (result objectstorage.StorableObject, err error) {
+	if result, _, err = UnconfirmedTxDependencyFromBytes(byteutils.ConcatBytes(key, data)); err != nil {
+		err = errors.Errorf("failed to parse UnconfirmedTxDependencyFromByte from bytes: %w", err)
 		return
 	}
 
 	return
 }
 
-func unconfirmedTxDependencyFromBytes(bytes []byte) (unconfirmedTxDependency *UnconfirmedTxDependency,
+// UnconfirmedTxDependencyFromBytes unmarshals an UnconfirmedTxDependency from bytes.
+func UnconfirmedTxDependencyFromBytes(bytes []byte) (unconfirmedTxDependency *UnconfirmedTxDependency,
 	consumedBytes int, err error) {
 	marshalUtil := marshalutil.New(bytes)
 
@@ -131,39 +194,11 @@ func unconfirmedTxDependencyFromBytes(bytes []byte) (unconfirmedTxDependency *Un
 	}
 
 	unconfirmedTxDependency = &UnconfirmedTxDependency{
-		txID:           txID,
-		txDependencies: txDependencies,
+		dependencyTxID: txID,
+		dependentTxIDs: txDependencies,
 	}
 
 	consumedBytes = marshalUtil.ReadOffset()
 
 	return
 }
-
-func Setup() {
-}
-
-//var unconfirmedTxDependencies map[TransactionID]TransactionIDs
-//func OnMessageSolid(message *Message) {
-//	if !message.ContainsTX() {
-//		message.SetEligible(true)
-//		return
-//	}
-//	if pendingDependencies := obtainPendingDependencies(message); len(pendingDependencies) == 0 {
-//		message.SetEligible(true)
-//		return
-//	}
-//	for dependencyTransactionID := range pendingDependencies {
-//		if transactionIDs, exists := unconfirmedTxDependencies[dependencyTransactionID]; !exists {
-//			unconfirmedTxDependencies[dependencyTransactionID] = NewTransactionIDs()
-//		}
-//		unconfirmedTxDependencies[dependencyTransactionID].Add(message.payload.(*Transaction).ID())
-//	}
-//}
-//func OnTransactionConfirmed(tx *Transaction) {
-//	for dependentTransaction := range unconfirmedTxDependencies[tx.ID()] {
-//		for attachment := range Attachments(dependentTransaction) {
-//			attachment.SetEligible(true)
-//		}
-//	}
-//}
