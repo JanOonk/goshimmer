@@ -59,7 +59,8 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	}
 
 	for dependencyTxID := range pendingDependencies {
-		err = e.storeMissingDependencies(tx.ID(), dependencyTxID)
+		txID := tx.ID()
+		err = e.storeMissingDependencies(&txID, dependencyTxID)
 		if err != nil {
 			return errors.Errorf("failed to add missing dependencies: %w", err)
 		}
@@ -69,7 +70,7 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 
 // storeMissingDependencies adds missing dependencies to the object storage
 // or append if already exist append dependent txID to the existing one
-func (e *EligibilityManager) storeMissingDependencies(dependentTxID ledgerstate.TransactionID, dependencyTxID *ledgerstate.TransactionID) error {
+func (e *EligibilityManager) storeMissingDependencies(dependentTxID *ledgerstate.TransactionID, dependencyTxID *ledgerstate.TransactionID) error {
 	storage := e.tangle.Storage
 	cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID)
 	consumed := cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
@@ -117,7 +118,7 @@ func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(depend
 	cachedDependencies := e.tangle.Storage.UnconfirmedTransactionDependencies(dependencyTxID)
 
 	// tx that need to be checked for the eligibility after one of dependency has been confirmed
-	var dependentTxs = make([]*ledgerstate.Transaction, 0)
+	dependentTxs := make([]*ledgerstate.Transaction, 0)
 	cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
 		// get tx from storage
 		for txID := range unconfirmedTxDependency.dependentTxIDs {

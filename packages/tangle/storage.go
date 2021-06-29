@@ -1146,11 +1146,11 @@ func NewUnconfirmedTxDependency(txID *ledgerstate.TransactionID) *UnconfirmedTxD
 }
 
 // AddDependency adds a transaction id dependency
-func (u *UnconfirmedTxDependency) AddDependency(txID ledgerstate.TransactionID) {
+func (u *UnconfirmedTxDependency) AddDependency(txID *ledgerstate.TransactionID) {
 	u.mutex.Lock()
 	defer u.mutex.Unlock()
 
-	u.dependentTxIDs[txID] = types.Void
+	u.dependentTxIDs[*txID] = types.Void
 }
 
 // DeleteDependency deletes a transaction id dependency
