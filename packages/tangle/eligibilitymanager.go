@@ -1,6 +1,8 @@
 package tangle
 
 import (
+	"sync"
+
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/goshimmer/packages/ledgerstate"
 	"github.com/iotaledger/hive.go/byteutils"
@@ -18,7 +20,8 @@ type EligibilityEvents struct {
 type EligibilityManager struct {
 	Events *EligibilityEvents
 
-	tangle *Tangle
+	tangle       *Tangle
+	storageMutex sync.Mutex
 }
 
 func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManager) {
@@ -71,6 +74,9 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 // storeMissingDependencies adds missing dependencies to the object storage
 // or append if already exist append dependent txID to the existing one
 func (e *EligibilityManager) storeMissingDependencies(dependentTxID *ledgerstate.TransactionID, dependencyTxID *ledgerstate.TransactionID) error {
+	e.storageMutex.Lock()
+	defer e.storageMutex.Unlock()
+
 	storage := e.tangle.Storage
 	cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID)
 	consumed := cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
