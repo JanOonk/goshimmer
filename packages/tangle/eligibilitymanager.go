@@ -59,11 +59,15 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	if len(pendingDependencies) == 0 {
 		e.SetEligibility(messageID)
 		return nil
+		// All dependencies are approved by the message
+	} else if NewUtils(e.tangle).AllTransactionsApprovedByMessages(pendingDependencies, messageID) {
+		e.SetEligibility(messageID)
+		return nil
 	}
 
 	for dependencyTxID := range pendingDependencies {
 		txID := tx.ID()
-		err = e.storeMissingDependencies(&txID, dependencyTxID)
+		err = e.storeMissingDependencies(&txID, &dependencyTxID)
 		if err != nil {
 			return errors.Errorf("failed to add missing dependencies: %w", err)
 		}
@@ -147,8 +151,8 @@ func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(depend
 }
 
 // obtainPendingDependencies return all transaction ids that are still pending confirmation that tx depends upon
-func (e *EligibilityManager) obtainPendingDependencies(tx *ledgerstate.Transaction) (map[*ledgerstate.TransactionID]struct{}, error) {
-	pendingDependencies := make(map[*ledgerstate.TransactionID]struct{})
+func (e *EligibilityManager) obtainPendingDependencies(tx *ledgerstate.Transaction) (ledgerstate.TransactionIDs, error) {
+	pendingDependencies := make(ledgerstate.TransactionIDs)
 	for _, input := range tx.Essence().Inputs() {
 		outputID := input.(*ledgerstate.UTXOInput).ReferencedOutputID()
 		txID := outputID.TransactionID()
@@ -157,14 +161,14 @@ func (e *EligibilityManager) obtainPendingDependencies(tx *ledgerstate.Transacti
 			return nil, errors.Errorf("failed to get inclusion state: %w", err)
 		}
 		if state != ledgerstate.Confirmed {
-			pendingDependencies[&txID] = struct{}{}
+			pendingDependencies[txID] = struct{}{}
 		}
 	}
 	return pendingDependencies, nil
 }
 
 // updateEligibility set eligibility to true for all transaction's attachments if all dependencies has been confirmed
-func (e *EligibilityManager) updateEligibility(dependentTx *ledgerstate.Transaction, dependencies map[*ledgerstate.TransactionID]struct{}) {
+func (e *EligibilityManager) updateEligibility(dependentTx *ledgerstate.Transaction, dependencies ledgerstate.TransactionIDs) {
 	if len(dependencies) == 0 {
 		// set eligible all tx dependent attachments
 		messageIDs := e.tangle.Storage.AttachmentMessageIDs(dependentTx.ID())
