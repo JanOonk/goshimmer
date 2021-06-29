@@ -46,7 +46,7 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	payloadType := message.Payload().Type()
 	// data messages are eligible right after solidification
 	if payloadType != ledgerstate.TransactionType {
-		e.SetEligibility(messageID)
+		e.makeEligible(messageID)
 		return nil
 	}
 
@@ -57,11 +57,11 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 	}
 	// no pending dependencies left
 	if len(pendingDependencies) == 0 {
-		e.SetEligibility(messageID)
+		e.makeEligible(messageID)
 		return nil
 		// All dependencies are approved by the message
 	} else if NewUtils(e.tangle).AllTransactionsApprovedByMessages(pendingDependencies, messageID) {
-		e.SetEligibility(messageID)
+		e.makeEligible(messageID)
 		return nil
 	}
 
@@ -98,7 +98,7 @@ func (e *EligibilityManager) storeMissingDependencies(dependentTxID *ledgerstate
 	return nil
 }
 
-func (e *EligibilityManager) SetEligibility(messageID MessageID) {
+func (e *EligibilityManager) makeEligible(messageID MessageID) {
 	e.tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
 		messageMetadata.SetEligible(true)
 	})
@@ -173,7 +173,7 @@ func (e *EligibilityManager) updateEligibility(dependentTx *ledgerstate.Transact
 		// set eligible all tx dependent attachments
 		messageIDs := e.tangle.Storage.AttachmentMessageIDs(dependentTx.ID())
 		for _, messageID := range messageIDs {
-			e.SetEligibility(messageID)
+			e.makeEligible(messageID)
 		}
 	}
 }
