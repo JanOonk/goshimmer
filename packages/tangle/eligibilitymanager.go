@@ -144,7 +144,9 @@ func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(depend
 		if err != nil {
 			return errors.Errorf("failed to get pending transaction's dependencies: %w", err)
 		}
-		e.updateEligibility(dependentTx, pendingDependencies)
+		if len(pendingDependencies) == 0 {
+			e.makeAttachmentsEligible(dependentTx)
+		}
 
 	}
 	return nil
@@ -167,14 +169,12 @@ func (e *EligibilityManager) obtainPendingDependencies(tx *ledgerstate.Transacti
 	return pendingDependencies, nil
 }
 
-// updateEligibility set eligibility to true for all transaction's attachments if all dependencies has been confirmed
-func (e *EligibilityManager) updateEligibility(dependentTx *ledgerstate.Transaction, dependencies ledgerstate.TransactionIDs) {
-	if len(dependencies) == 0 {
-		// set eligible all tx dependent attachments
-		messageIDs := e.tangle.Storage.AttachmentMessageIDs(dependentTx.ID())
-		for _, messageID := range messageIDs {
-			e.makeEligible(messageID)
-		}
+// makeAttachmentsEligible set eligibility to true for all transaction's attachments if all dependencies has been confirmed
+func (e *EligibilityManager) makeAttachmentsEligible(dependentTx *ledgerstate.Transaction) {
+	// set eligible all tx dependent attachments
+	messageIDs := e.tangle.Storage.AttachmentMessageIDs(dependentTx.ID())
+	for _, messageID := range messageIDs {
+		e.makeEligible(messageID)
 	}
 }
 
