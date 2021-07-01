@@ -12,21 +12,28 @@ import (
 func TestDependenciesConfirmed(t *testing.T) {
 	tangle := newTestTangle()
 	defer tangle.Shutdown()
-	messages, transactions, inputs, outputs, outputsByID, wallets, walletsByAddress, genesisTransaction := setupEligbilityTests(tangle)
-	scenarioMessagesApproveEmptyID(tangle, inputs, genesisTransaction, outputs, wallets, transactions, outputsByID, walletsByAddress, messages)
-	tangle.LedgerState.UTXODAG.in
-	mockutils.mock(tangle).when(tangle.UTXODAG.InclusionState).return(sturct{}, nil)
-}
+	messages, wallets, walletsByAddress, genesisTransaction := setupEligibilityTests(tangle)
 
-func setupEligbilityTests(tangle *Tangle) (map[string]*Message, map[string]*ledgerstate.Transaction, map[string]*ledgerstate.UTXOInput, map[string]*ledgerstate.SigLockedSingleOutput, map[ledgerstate.OutputID]ledgerstate.Output, map[string]wallet, map[ledgerstate.Address]wallet, *ledgerstate.Transaction) {
-	tangle.EligibilityManager.Setup()
-
-	messages := make(map[string]*Message)
 	transactions := make(map[string]*ledgerstate.Transaction)
-	// branches := make(map[string]ledgerstate.BranchID)
 	inputs := make(map[string]*ledgerstate.UTXOInput)
 	outputs := make(map[string]*ledgerstate.SigLockedSingleOutput)
 	outputsByID := make(map[ledgerstate.OutputID]ledgerstate.Output)
+
+	scenarioMessagesApproveEmptyID(tangle, inputs, genesisTransaction, outputs, wallets, transactions, outputsByID, walletsByAddress, messages)
+	mockUTXO := newUtxoDagMock(t, tangle.LedgerState.UTXODAG)
+	mockUTXO.On("InclusionState", transactions["1"]).Return(ledgerstate.Confirmed)
+	tangle.EligibilityManager.Events.MessageEligible.Attach(events.NewClosure(func() {
+		fmt.Println("Test ")
+	}))
+	tangle.Solidifier.Events.MessageSolid.Trigger(messages["1"])
+
+}
+
+func setupEligibilityTests(tangle *Tangle) (map[string]*Message, map[string]wallet, map[ledgerstate.Address]wallet, *ledgerstate.Transaction) {
+	tangle.EligibilityManager.Setup()
+
+	messages := make(map[string]*Message)
+	// branches := make(map[string]ledgerstate.BranchID)
 
 	wallets := make(map[string]wallet)
 	walletsByAddress := make(map[ledgerstate.Address]wallet)
@@ -58,7 +65,7 @@ func setupEligbilityTests(tangle *Tangle) (map[string]*Message, map[string]*ledg
 	)
 
 	genesisTransaction := ledgerstate.NewTransaction(genesisEssence, ledgerstate.UnlockBlocks{ledgerstate.NewReferenceUnlockBlock(0)})
-	return messages, transactions, inputs, outputs, outputsByID, wallets, walletsByAddress, genesisTransaction
+	return messages, wallets, walletsByAddress, genesisTransaction
 }
 
 func scenarioMessagesApproveEmptyID(tangle *Tangle, inputs map[string]*ledgerstate.UTXOInput, genesisTransaction *ledgerstate.Transaction, outputs map[string]*ledgerstate.SigLockedSingleOutput, wallets map[string]wallet, transactions map[string]*ledgerstate.Transaction, outputsByID map[ledgerstate.OutputID]ledgerstate.Output, walletsByAddress map[ledgerstate.Address]wallet, messages map[string]*Message) {
@@ -72,9 +79,35 @@ func scenarioMessagesApproveEmptyID(tangle *Tangle, inputs map[string]*ledgersta
 	tangle.Storage.StoreMessage(messages["1"])
 
 	// Message 2
+	inputs["B"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["1"].ID(), selectIndex(transactions["1"], wallets["B"])))
+	outputsByID[inputs["B"].ReferencedOutputID()] = ledgerstate.NewOutputs(outputs["B"])[0]
+
 	inputs["Message 1"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["1"].ID(), 0))
+
 	outputs["D"] = ledgerstate.NewSigLockedSingleOutput(1, wallets["D"].address)
 	transactions["2"] = makeTransaction(ledgerstate.NewInputs(inputs["Message1"]), ledgerstate.NewOutputs(outputs["D"]), outputsByID, walletsByAddress, wallets["A"])
 	messages["2"] = newTestParentsPayloadMessage(transactions["2"], []MessageID{EmptyMessageID}, []MessageID{})
 	tangle.Storage.StoreMessage(messages["2"])
+	return
+
+}
+
+type utxoDagMock struct {
+	mock.Mock
+	test *testing.T
+}
+
+func newUtxoDagMock(t *testing.T, utxoDag *ledgerstate.UTXODAG) *utxoDagMock {
+	u := &utxoDagMock{
+		test: t,
+	}
+	u.Test(t)
+
+	return u
+}
+
+func (u *utxoDagMock) InclusionState(transactionID ledgerstate.TransactionID) (inclusionState ledgerstate.InclusionState, err error) {
+	args := u.Called(transactionID)
+	inclusionState = args.Get(0).(ledgerstate.InclusionState)
+	return
 }

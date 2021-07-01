@@ -24,6 +24,9 @@ import (
 )
 
 // region UTXODAG //////////////////////////////////////////////////////////////////////////////////////////////////////
+type IUTXODAG interface {
+	InclusionState(transactionID TransactionID) (inclusionState InclusionState, err error)
+}
 
 // UTXODAG represents the DAG that is formed by Transactions consuming Inputs and creating Outputs. It forms the core of
 // the ledger state and keeps track of the balances and the different perceptions of potential conflicts.
