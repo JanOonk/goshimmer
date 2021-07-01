@@ -91,6 +91,65 @@ func (u *Utils) WalkMessageAndMetadata(callback func(message *Message, messageMe
 // region structural checks ////////////////////////////////////////////////////////////////////////////////////////////
 
 // AllTransactionsApprovedByMessages checks if all Transactions were attached by at least one Message that was directly
+// approved by the given Message.
+func (u *Utils) AllTransactionsDirectlyApprovedByMessages(transactionIDs ledgerstate.TransactionIDs, messageIDs ...MessageID) (approved bool) {
+	transactionIDs = transactionIDs.Clone()
+
+	for _, messageID := range messageIDs {
+		for transactionID := range transactionIDs {
+			if u.TransactionApprovedByMessage(transactionID, messageID) {
+				delete(transactionIDs, transactionID)
+			}
+		}
+	}
+
+	return len(transactionIDs) == 0
+}
+
+// TransactionApprovedByMessage checks if the Transaction was attached by at least one Message that was directly or
+// indirectly approved by the given Message.
+func (u *Utils) transactionDirectlyApprovedByMessage(transactionID ledgerstate.TransactionID, messageID MessageID) (approved bool) {
+	approved = false
+	for _, attachmentMessageID := range u.tangle.Storage.AttachmentMessageIDs(transactionID) {
+		if attachmentMessageID == messageID {
+			return true
+		}
+
+		var attachmentBooked bool
+		u.tangle.Storage.MessageMetadata(attachmentMessageID).Consume(func(attachmentMetadata *MessageMetadata) {
+			attachmentBooked = attachmentMetadata.IsBooked()
+		})
+		if !attachmentBooked {
+			continue
+		}
+
+		u.tangle.Storage.Message(messageID).Consume(func(message *Message) {
+			for _, parentID := range message.Parents() {
+				var parentBooked bool
+				u.tangle.Storage.MessageMetadata(parentID).Consume(func(parentMetadata *MessageMetadata) {
+					parentBooked = parentMetadata.IsBooked()
+				})
+				if !parentBooked {
+					continue
+				}
+
+				// First check all of the parents to avoid unnecessary checks and possible walking.
+				if attachmentMessageID == parentID {
+					approved = true
+					return
+				}
+
+			}
+		})
+		if approved {
+			return
+		}
+	}
+
+	return
+}
+
+// AllTransactionsApprovedByMessages checks if all Transactions were attached by at least one Message that was directly
 // or indirectly approved by the given Message.
 func (u *Utils) AllTransactionsApprovedByMessages(transactionIDs ledgerstate.TransactionIDs, messageIDs ...MessageID) (approved bool) {
 	transactionIDs = transactionIDs.Clone()
