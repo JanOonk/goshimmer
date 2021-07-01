@@ -99,9 +99,9 @@ func TransactionIDFromMarshalUtil(marshalUtil *marshalutil.MarshalUtil) (transac
 func TransactionIDsFromMarshalUtil(marshalUtil *marshalutil.MarshalUtil) (transactionIDs TransactionIDs, err error) {
 	transactionIDs = make(TransactionIDs, 0)
 	for !marshalUtil.DoneReading() {
-		transactionID, err := TransactionIDFromMarshalUtil(marshalUtil)
-		if err != nil {
-			err = errors.Errorf("failed to parse TransactionIDs: %w", err)
+		transactionID, err2 := TransactionIDFromMarshalUtil(marshalUtil)
+		if err2 != nil {
+			err2 = errors.Errorf("failed to parse TransactionIDs: %w", err)
 			return
 		}
 		transactionIDs[transactionID] = types.Void
