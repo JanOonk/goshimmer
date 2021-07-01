@@ -3,7 +3,6 @@ package tangle
 import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"testing"
 	"time"
 
@@ -25,11 +24,12 @@ func TestDependenciesConfirmed(t *testing.T) {
 	tangle.LedgerState.UTXODAG = mockUTXO
 	err := tangle.EligibilityManager.checkEligibility(messages["1"].ID())
 	assert.NoError(t, err)
+	fmt.Println("eligibilityResult1")
 	var eligibilityResult1 bool
 	tangle.Storage.MessageMetadata(messages["1"].ID()).Consume(func(messageMetadata *MessageMetadata) {
 		eligibilityResult1 = messageMetadata.IsEligible()
 	})
-
+	fmt.Println(eligibilityResult1)
 	assert.True(t, eligibilityResult1)
 	// TODO check if event message eligible was triggered
 
