@@ -17,11 +17,12 @@ func TestDependenciesConfirmed(t *testing.T) {
 	defer tangle.Shutdown()
 	wallets, walletsByAddress, genesisTransaction := setupEligibilityTests(t, tangle)
 
-	messages, transactions, _, _, _ := scenarioMessagesApproveEmptyID(t, tangle, genesisTransaction, wallets, walletsByAddress)
-	mockUTXO := newUtxoDagMock(t, tangle.LedgerState.UTXODAG)
-	mockUTXO.On("InclusionState", transactions["1"]).Return(ledgerstate.Confirmed)
+	messages, transactions, _, _, _ := scenario1MessagesApproveEmptyID(t, tangle, genesisTransaction, wallets, walletsByAddress)
+	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
+	mockUTXO.On("InclusionState", genesisTransaction.ID()).Return(ledgerstate.Confirmed)
+	mockUTXO.On("InclusionState", transactions["2"].ID()).Return(ledgerstate.Confirmed)
 	// TODO mocking does not work
-
+	tangle.LedgerState.UTXODAG = mockUTXO
 	err := tangle.EligibilityManager.checkEligibility(messages["1"].ID())
 	assert.NoError(t, err)
 	var eligibilityResult1 bool
@@ -31,6 +32,34 @@ func TestDependenciesConfirmed(t *testing.T) {
 
 	assert.True(t, eligibilityResult1)
 	// TODO check if event message eligible was triggered
+
+}
+
+func TestDataMessageAlwaysEligible(t *testing.T) {
+	tangle := newTestTangle()
+	defer tangle.Shutdown()
+	tangle.EligibilityManager.Setup()
+
+	message := newTestDataMessage("data")
+	tangle.Storage.StoreMessage(message)
+
+	err := tangle.EligibilityManager.checkEligibility(message.ID())
+	assert.NoError(t, err)
+
+	var eligibilityResult1 bool
+	tangle.Storage.MessageMetadata(message.ID()).Consume(func(messageMetadata *MessageMetadata) {
+		eligibilityResult1 = messageMetadata.IsEligible()
+	})
+
+	assert.True(t, eligibilityResult1)
+}
+
+func TestDependencyDirectApproval(t *testing.T) {
+	tangle := newTestTangle()
+	defer tangle.Shutdown()
+
+	//wallets, walletsByAddress, genesisTransaction := setupEligibilityTests(t, tangle)
+	//messages, transactions, _, _, _ := scenario2MessagesApproveDependency(t, tangle, genesisTransaction, wallets, walletsByAddress)
 
 }
 
@@ -69,7 +98,6 @@ func setupEligibilityTests(t *testing.T, tangle *Tangle) (map[string]wallet, map
 	)
 
 	genesisTransaction := ledgerstate.NewTransaction(genesisEssence, ledgerstate.UnlockBlocks{ledgerstate.NewReferenceUnlockBlock(0)})
-
 	stored, _, _ := tangle.LedgerState.UTXODAG.StoreTransaction(genesisTransaction)
 	assert.True(t, stored, "genesis transaction stored")
 	fmt.Println("genesis: ", genesisTransaction.ID().Base58())
@@ -77,7 +105,7 @@ func setupEligibilityTests(t *testing.T, tangle *Tangle) (map[string]wallet, map
 	return wallets, walletsByAddress, genesisTransaction
 }
 
-func scenarioMessagesApproveEmptyID(t *testing.T, tangle *Tangle, genesisTransaction *ledgerstate.Transaction, wallets map[string]wallet, walletsByAddress map[ledgerstate.Address]wallet) (map[string]*Message, map[string]*ledgerstate.Transaction, map[string]*ledgerstate.UTXOInput, map[string]*ledgerstate.SigLockedSingleOutput, map[ledgerstate.OutputID]ledgerstate.Output) {
+func scenario1MessagesApproveEmptyID(t *testing.T, tangle *Tangle, genesisTransaction *ledgerstate.Transaction, wallets map[string]wallet, walletsByAddress map[ledgerstate.Address]wallet) (map[string]*Message, map[string]*ledgerstate.Transaction, map[string]*ledgerstate.UTXOInput, map[string]*ledgerstate.SigLockedSingleOutput, map[ledgerstate.OutputID]ledgerstate.Output) {
 	messages := make(map[string]*Message)
 	transactions := make(map[string]*ledgerstate.Transaction)
 	inputs := make(map[string]*ledgerstate.UTXOInput)
@@ -93,12 +121,12 @@ func scenarioMessagesApproveEmptyID(t *testing.T, tangle *Tangle, genesisTransac
 	transactions["1"] = makeTransaction(ledgerstate.NewInputs(inputs["GENESIS"]), ledgerstate.NewOutputs(outputs["1A"], outputs["1B"], outputs["1C"]), outputsByID, walletsByAddress, wallets["GENESIS"])
 	messages["1"] = newTestParentsPayloadMessage(transactions["1"], []MessageID{EmptyMessageID}, []MessageID{})
 
-	tangle.Storage.StoreMessage(messages["1"])
 	stored, _, _ := tangle.LedgerState.UTXODAG.StoreTransaction(transactions["1"])
 	assert.True(t, stored, "transaction stored")
-	_, stored = tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
-	assert.True(t, stored, "attachment stored")
+	tangle.Storage.StoreMessage(messages["1"])
 
+	//_, stored = tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
+	//assert.True(t, stored, "attachment stored")
 	// Message 2
 	inputs["2A"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["1"].ID(), selectIndex(transactions["1"], wallets["A"])))
 	outputsByID[inputs["2A"].ReferencedOutputID()] = ledgerstate.NewOutputs(outputs["1A"])[0]
@@ -110,30 +138,97 @@ func scenarioMessagesApproveEmptyID(t *testing.T, tangle *Tangle, genesisTransac
 	tangle.Storage.StoreMessage(messages["2"])
 	stored, _, _ = tangle.LedgerState.UTXODAG.StoreTransaction(transactions["2"])
 	assert.True(t, stored, "transaction stored")
-	_, stored = tangle.Storage.StoreAttachment(transactions["2"].ID(), messages["2"].ID())
-	assert.True(t, stored, "attachment stored")
+	//_, stored = tangle.Storage.StoreAttachment(transactions["2"].ID(), messages["2"].ID())
+	//assert.True(t, stored, "attachment stored")
 
 	fmt.Println("txs: ", transactions["1"].ID(), transactions["2"].ID())
 	fmt.Println("msgs: ", messages["1"].ID(), messages["2"].ID())
+
 	return messages, transactions, inputs, outputs, outputsByID
 }
 
-type utxoDagMock struct {
-	mock.Mock
-	test *testing.T
+func scenario2MessagesApproveDependency(t *testing.T, tangle *Tangle, genesisTransaction *ledgerstate.Transaction, wallets map[string]wallet, walletsByAddress map[ledgerstate.Address]wallet) (map[string]*Message, map[string]*ledgerstate.Transaction, map[string]*ledgerstate.UTXOInput, map[string]*ledgerstate.SigLockedSingleOutput, map[ledgerstate.OutputID]ledgerstate.Output) {
+	messages := make(map[string]*Message)
+	transactions := make(map[string]*ledgerstate.Transaction)
+	inputs := make(map[string]*ledgerstate.UTXOInput)
+	outputs := make(map[string]*ledgerstate.SigLockedSingleOutput)
+	outputsByID := make(map[ledgerstate.OutputID]ledgerstate.Output)
+
+	// TODO
+	return messages, transactions, inputs, outputs, outputsByID
 }
 
-func newUtxoDagMock(t *testing.T, utxoDag *ledgerstate.UTXODAG) *utxoDagMock {
-	u := &utxoDagMock{
-		test: t,
-	}
-	u.Test(t)
-
-	return u
-}
-
-func (u *utxoDagMock) InclusionState(transactionID ledgerstate.TransactionID) (inclusionState ledgerstate.InclusionState, err error) {
-	args := u.Called(transactionID)
-	inclusionState = args.Get(0).(ledgerstate.InclusionState)
-	return
-}
+//type utxoDagMock struct {
+//	mock.Mock
+//	test *testing.T
+//	utxoDag *ledgerstate.UTXODAG
+//}
+//
+//func newUtxoDagMock(t *testing.T, utxoDag *ledgerstate.UTXODAG) *utxoDagMock {
+//	u := &utxoDagMock{
+//		test: t,
+//	}
+//	u.Test(t)
+//	u.utxoDag = utxoDag
+//	return u
+//}
+//
+//func (u *utxoDagMock) InclusionState(transactionID ledgerstate.TransactionID) (inclusionState ledgerstate.InclusionState, err error) {
+//	args := u.Called(transactionID)
+//	inclusionState = args.Get(0).(ledgerstate.InclusionState)
+//	return
+//}
+//
+//func (u *utxoDagMock) Shutdown() {
+//	u.utxoDag.Shutdown()
+//	return
+//}
+//
+//func (u *utxoDagMock) StoreTransaction(transaction *ledgerstate.Transaction) (stored bool, solidityType ledgerstate.SolidityType, err error) {
+//	return u.utxoDag.StoreTransaction(transaction)
+//
+//}
+//
+//func (u *utxoDagMock) CheckTransaction(transaction *ledgerstate.Transaction) (err error) {
+//	return u.utxoDag.CheckTransaction(transaction)
+//}
+//
+//func (u *utxoDagMock) CachedTransaction(transactionID ledgerstate.TransactionID) (cachedTransaction *ledgerstate.CachedTransaction) {
+//	return u.utxoDag.CachedTransaction(transactionID)
+//}
+//
+//func (u *utxoDagMock) Transaction(transactionID ledgerstate.TransactionID) (transaction *ledgerstate.Transaction) {
+//	return u.utxoDag.Transaction(transactionID)
+//}
+//
+//func (u *utxoDagMock) Transactions() (transactions map[ledgerstate.TransactionID]*ledgerstate.Transaction) {
+//	return u.utxoDag.Transactions()
+//}
+//
+//func (u *utxoDagMock) CachedTransactionMetadata(transactionID ledgerstate.TransactionID, computeIfAbsentCallback ...func(transactionID ledgerstate.TransactionID) *ledgerstate.TransactionMetadata) (cachedTransactionMetadata *CachedTransactionMetadata) {
+//	return u.utxoDag.CachedTransactionMetadata(transactionID, computeIfAbsentCallback...)
+//}
+//
+//func (u *utxoDagMock) CachedOutput(outputID ledgerstate.OutputID) (cachedOutput *ledgerstate.CachedOutput) {
+//	return u.utxoDag.CachedOutput(outputID)
+//}
+//
+//func (u *utxoDagMock) CachedOutputMetadata(outputID ledgerstate.OutputID) (cachedOutput *ledgerstate.CachedOutputMetadata) {
+//	return u.utxoDag.CachedOutputMetadata(outputID)
+//}
+//
+//func (u *utxoDagMock) CachedConsumers(outputID ledgerstate.OutputID, optionalSolidityType ...ledgerstate.SolidityType) (cachedConsumers ledgerstate.CachedConsumers) {
+//	return u.utxoDag.CachedConsumers(outputID, optionalSolidityType...)
+//}
+//
+//func (u *utxoDagMock) LoadSnapshot(snapshot *ledgerstate.Snapshot) {
+//	u.utxoDag.LoadSnapshot(snapshot)
+//}
+//
+//func (u *utxoDagMock) CachedAddressOutputMapping(address ledgerstate.Address) (cachedAddressOutputMappings ledgerstate.CachedAddressOutputMappings) {
+//	return u.utxoDag.CachedAddressOutputMapping(address)
+//}
+//
+//func (u *utxoDagMock) SetTransactionConfirmed(transactionID ledgerstate.TransactionID) (err error) {
+//	return u.utxoDag.SetTransactionConfirmed(transactionID)
+//}

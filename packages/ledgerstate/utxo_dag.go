@@ -3,8 +3,10 @@ package ledgerstate
 import (
 	"container/list"
 	"fmt"
+	"github.com/stretchr/testify/mock"
 	"strconv"
 	"sync"
+	"testing"
 
 	"github.com/cockroachdb/errors"
 	"github.com/iotaledger/hive.go/byteutils"
@@ -24,14 +26,116 @@ import (
 )
 
 // region UTXODAG //////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// IUTXODAG is the interface for UTXODAG which is the core of the ledger state
+// that is formed by Transactions consuming Inputs and creating Outputs.  It represents all the methods
+//that helps to keep track of the balances and the different perceptions of potential conflicts.
 type IUTXODAG interface {
+	GetEvents() *UTXODAGEvents
+	Shutdown()
+	StoreTransaction(transaction *Transaction) (stored bool, solidityType SolidityType, err error)
+	CheckTransaction(transaction *Transaction) (err error)
 	InclusionState(transactionID TransactionID) (inclusionState InclusionState, err error)
+	CachedTransaction(transactionID TransactionID) (cachedTransaction *CachedTransaction)
+	Transaction(transactionID TransactionID) (transaction *Transaction)
+	Transactions() (transactions map[TransactionID]*Transaction)
+	CachedTransactionMetadata(transactionID TransactionID, computeIfAbsentCallback ...func(transactionID TransactionID) *TransactionMetadata) (cachedTransactionMetadata *CachedTransactionMetadata)
+	CachedOutput(outputID OutputID) (cachedOutput *CachedOutput)
+	CachedOutputMetadata(outputID OutputID) (cachedOutput *CachedOutputMetadata)
+	CachedConsumers(outputID OutputID, optionalSolidityType ...SolidityType) (cachedConsumers CachedConsumers)
+	LoadSnapshot(snapshot *Snapshot)
+	ConsumedOutputs(transaction *Transaction) (cachedInputs CachedOutputs)
+	CachedAddressOutputMapping(address Address) (cachedAddressOutputMappings CachedAddressOutputMappings)
+	SetTransactionConfirmed(transactionID TransactionID) (err error)
+}
+
+type utxoDagMock struct {
+	mock.Mock
+	test    *testing.T
+	utxoDag IUTXODAG
+}
+
+func NewUtxoDagMock(t *testing.T, utxoDag IUTXODAG) *utxoDagMock {
+	u := &utxoDagMock{
+		test: t,
+	}
+	u.Test(t)
+	u.utxoDag = utxoDag
+	return u
+}
+
+func (u *utxoDagMock) GetEvents() *UTXODAGEvents {
+	return u.GetEvents()
+}
+
+func (u *utxoDagMock) InclusionState(transactionID TransactionID) (inclusionState InclusionState, err error) {
+	args := u.Called(transactionID)
+	inclusionState = args.Get(0).(InclusionState)
+	return
+}
+
+func (u *utxoDagMock) Shutdown() {
+	u.utxoDag.Shutdown()
+	return
+}
+
+func (u *utxoDagMock) StoreTransaction(transaction *Transaction) (stored bool, solidityType SolidityType, err error) {
+	return u.utxoDag.StoreTransaction(transaction)
+
+}
+
+func (u *utxoDagMock) CheckTransaction(transaction *Transaction) (err error) {
+	return u.utxoDag.CheckTransaction(transaction)
+}
+
+func (u *utxoDagMock) CachedTransaction(transactionID TransactionID) (cachedTransaction *CachedTransaction) {
+	return u.utxoDag.CachedTransaction(transactionID)
+}
+
+func (u *utxoDagMock) Transaction(transactionID TransactionID) (transaction *Transaction) {
+	return u.utxoDag.Transaction(transactionID)
+}
+
+func (u *utxoDagMock) Transactions() (transactions map[TransactionID]*Transaction) {
+	return u.utxoDag.Transactions()
+}
+
+func (u *utxoDagMock) CachedTransactionMetadata(transactionID TransactionID, computeIfAbsentCallback ...func(transactionID TransactionID) *TransactionMetadata) (cachedTransactionMetadata *CachedTransactionMetadata) {
+	return u.utxoDag.CachedTransactionMetadata(transactionID, computeIfAbsentCallback...)
+}
+
+func (u *utxoDagMock) CachedOutput(outputID OutputID) (cachedOutput *CachedOutput) {
+	return u.utxoDag.CachedOutput(outputID)
+}
+
+func (u *utxoDagMock) CachedOutputMetadata(outputID OutputID) (cachedOutput *CachedOutputMetadata) {
+	return u.utxoDag.CachedOutputMetadata(outputID)
+}
+
+func (u *utxoDagMock) CachedConsumers(outputID OutputID, optionalSolidityType ...SolidityType) (cachedConsumers CachedConsumers) {
+	return u.utxoDag.CachedConsumers(outputID, optionalSolidityType...)
+}
+
+func (u *utxoDagMock) LoadSnapshot(snapshot *Snapshot) {
+	u.utxoDag.LoadSnapshot(snapshot)
+}
+
+func (u *utxoDagMock) CachedAddressOutputMapping(address Address) (cachedAddressOutputMappings CachedAddressOutputMappings) {
+	return u.utxoDag.CachedAddressOutputMapping(address)
+}
+
+func (u *utxoDagMock) SetTransactionConfirmed(transactionID TransactionID) (err error) {
+	return u.utxoDag.SetTransactionConfirmed(transactionID)
+}
+
+func (u *utxoDagMock) ConsumedOutputs(transaction *Transaction) (cachedInputs CachedOutputs) {
+	return u.utxoDag.ConsumedOutputs(transaction)
 }
 
 // UTXODAG represents the DAG that is formed by Transactions consuming Inputs and creating Outputs. It forms the core of
 // the ledger state and keeps track of the balances and the different perceptions of potential conflicts.
 type UTXODAG struct {
-	Events *UTXODAGEvents
+	events *UTXODAGEvents
 
 	transactionStorage          *objectstorage.ObjectStorage
 	transactionMetadataStorage  *objectstorage.ObjectStorage
@@ -50,7 +154,7 @@ func NewUTXODAG(store kvstore.KVStore, cacheProvider *database.CacheTimeProvider
 	options := buildObjectStorageOptions(cacheProvider)
 	osFactory := objectstorage.NewFactory(store, database.PrefixLedgerState)
 	utxoDAG = &UTXODAG{
-		Events: &UTXODAGEvents{
+		events: &UTXODAGEvents{
 			TransactionBranchIDUpdated: events.NewEvent(transactionIDEventHandler),
 			TransactionConfirmed:       events.NewEvent(transactionIDEventHandler),
 			TransactionSolid:           events.NewEvent(transactionIDEventHandler),
@@ -64,6 +168,11 @@ func NewUTXODAG(store kvstore.KVStore, cacheProvider *database.CacheTimeProvider
 		branchDAG:                   branchDAG,
 	}
 	return
+}
+
+// GetEvents returns all events of the UTXODAG
+func (u *UTXODAG) GetEvents() *UTXODAGEvents {
+	return u.events
 }
 
 // Shutdown shuts down the UTXODAG and persists its state.
@@ -311,7 +420,7 @@ func (u *UTXODAG) SetTransactionConfirmed(transactionID TransactionID) (err erro
 			continue
 		}
 
-		u.Events.TransactionConfirmed.Trigger(currentTransactionID)
+		u.GetEvents().TransactionConfirmed.Trigger(currentTransactionID)
 	}
 
 	return err
@@ -378,7 +487,7 @@ func (u *UTXODAG) solidifyTransaction(transaction *Transaction, transactionMetad
 	}
 
 	if validErr := u.transactionObjectivelyValid(transaction, consumedOutputs); validErr != nil {
-		u.Events.TransactionInvalid.Trigger(transaction, validErr)
+		u.GetEvents().TransactionInvalid.Trigger(transaction, validErr)
 
 		return
 	}
@@ -386,7 +495,7 @@ func (u *UTXODAG) solidifyTransaction(transaction *Transaction, transactionMetad
 	if _, err = u.bookTransaction(transaction, transactionMetadata, consumedOutputs); err != nil {
 		err = errors.Errorf("failed to book Transaction with %s: %w", transaction.ID(), err)
 
-		u.Events.Error.Trigger(err)
+		u.GetEvents().Error.Trigger(err)
 
 		return
 	}
@@ -395,7 +504,7 @@ func (u *UTXODAG) solidifyTransaction(transaction *Transaction, transactionMetad
 		u.ManageStoreAddressOutputMapping(output)
 	}
 
-	u.Events.TransactionSolid.Trigger(transaction.ID())
+	u.GetEvents().TransactionSolid.Trigger(transaction.ID())
 
 	for transactionID := range u.consumingTransactionIDs(transaction, Unsolid) {
 		propagationWalker.Push(transactionID)
@@ -619,7 +728,7 @@ func (u *UTXODAG) forkConsumer(transactionID TransactionID, conflictingInputs Ou
 		cachedConsumingConflictBranch.Release()
 
 		txMetadata.SetBranchID(conflictBranchID)
-		u.Events.TransactionBranchIDUpdated.Trigger(transactionID)
+		u.GetEvents().TransactionBranchIDUpdated.Trigger(transactionID)
 
 		outputIds := u.createdOutputIDsOfTransaction(transactionID)
 		for _, outputID := range outputIds {
@@ -667,7 +776,7 @@ func (u *UTXODAG) propagateBranchUpdates(transactionID TransactionID) (updatedOu
 func (u *UTXODAG) updateBranchOfTransaction(transactionID TransactionID, branchID BranchID) (updatedOutputs []OutputID) {
 	if !u.CachedTransactionMetadata(transactionID).Consume(func(transactionMetadata *TransactionMetadata) {
 		if transactionMetadata.SetBranchID(branchID) {
-			u.Events.TransactionBranchIDUpdated.Trigger(transactionID)
+			u.GetEvents().TransactionBranchIDUpdated.Trigger(transactionID)
 
 			updatedOutputs = u.createdOutputIDsOfTransaction(transactionID)
 			for _, outputID := range updatedOutputs {
