@@ -60,7 +60,7 @@ func (e *EligibilityManager) checkEligibility(messageID MessageID) error {
 		e.makeEligible(messageID)
 		return nil
 		// All dependencies are approved by the message
-	} else if NewUtils(e.tangle).AllTransactionsApprovedByMessages(pendingDependencies, messageID) {
+	} else if NewUtils(e.tangle).AllTransactionsDirectlyApprovedByMessages(pendingDependencies, messageID) {
 		e.makeEligible(messageID)
 		return nil
 	}
