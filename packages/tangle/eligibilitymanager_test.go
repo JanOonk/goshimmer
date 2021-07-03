@@ -11,7 +11,6 @@ import (
 )
 
 // TODO think where to check also the other function
-// TODO storage unit test
 
 func TestDependenciesConfirmed(t *testing.T) {
 	tangle := newTestTangle()
@@ -25,8 +24,7 @@ func TestDependenciesConfirmed(t *testing.T) {
 
 	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
 	assert.False(t, isEligibleFlag)
-	// TODO check if it is in the storage
-	// TODO correct store missingtransactiondependencies
+
 	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Confirmed)
 	isEligibleFlag = runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
 	assert.True(t, isEligibleFlag)

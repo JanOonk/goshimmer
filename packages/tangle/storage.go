@@ -113,7 +113,7 @@ func NewStorage(tangle *Tangle) (storage *Storage) {
 		statementStorage:                  osFactory.New(PrefixStatement, StatementFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 		branchWeightStorage:               osFactory.New(PrefixBranchWeight, BranchWeightFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
 		markerMessageMappingStorage:       osFactory.New(PrefixMarkerMessageMapping, MarkerMessageMappingFromObjectStorage, cacheProvider.CacheTime(cacheTime), MarkerMessageMappingPartitionKeys, objectstorage.StoreOnCreation(true)),
-		unconfirmedTxDependenciesStorage:  osFactory.New(PrefixUnconfirmedTxDependencies, UnconfirmedTxDependenciesFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false)),
+		unconfirmedTxDependenciesStorage:  osFactory.New(PrefixUnconfirmedTxDependencies, UnconfirmedTxDependenciesFromObjectStorage, cacheProvider.CacheTime(cacheTime), objectstorage.LeakDetectionEnabled(false), UnconfirmedTxDependencyPartitionKeys),
 
 		Events: &StorageEvents{
 			MessageStored:        events.NewEvent(MessageIDCaller),
@@ -239,11 +239,16 @@ func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *Unconfir
 	return &CachedUnconfirmedTxDependency{CachedObject: cachedDependencies}
 }
 
-func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (cachedDependencies CachedUnconfirmedTxDependency) {
+// UnconfirmedTransactionDependencies gets the CachedUnconfirmedTransactionDependencies from the objectStorage that matches provided transactionID
+func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (matchedCachedDependencies *CachedUnconfirmedTxDependency) {
 	s.unconfirmedTxDependenciesStorage.ForEach(func(key []byte, cachedObject objectstorage.CachedObject) bool {
-		cachedDependencies = CachedUnconfirmedTxDependency{CachedObject: cachedObject}
+		cachedDependencies := CachedUnconfirmedTxDependency{CachedObject: cachedObject}
+		if cachedDependencies.ID() == *transactionID {
+			matchedCachedDependencies = &cachedDependencies
+			return false
+		}
 		return true
-	}, objectstorage.WithIteratorPrefix(transactionID.Bytes()))
+	})
 	return
 }
 
@@ -1153,6 +1158,8 @@ func (c *CachedMissingMessage) String() string {
 
 // region UnconfirmedTxDependency //////////////////////////////////////////////////////////////////////////////////////
 
+var UnconfirmedTxDependencyPartitionKeys = objectstorage.PartitionKey(ledgerstate.TransactionIDLength)
+
 // UnconfirmedTxDependency maps a transaction to all of the transactions that create its inputs which are not yet confirmed
 type UnconfirmedTxDependency struct {
 	objectstorage.StorableObjectFlags
@@ -1220,7 +1227,8 @@ type CachedUnconfirmedTxDependency struct {
 	objectstorage.CachedObject
 }
 
-// ID returns the UnconfirmedTxDependency of the requested MissingMessage.
+//TODO what for?
+// ID returns the dependency transactionID of the UnconfirmedTxDependency.
 func (c *CachedUnconfirmedTxDependency) ID() (id ledgerstate.TransactionID) {
 	id, _, err := ledgerstate.TransactionIDFromBytes(c.Key())
 	if err != nil {

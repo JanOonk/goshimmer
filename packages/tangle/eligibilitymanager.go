@@ -82,19 +82,20 @@ func (e *EligibilityManager) storeMissingDependencies(dependentTxID *ledgerstate
 	defer e.storageMutex.Unlock()
 
 	storage := e.tangle.Storage
-	cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID)
-	consumed := cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
-		unconfirmedTxDependency.AddDependency(dependentTxID)
-	})
-	if !consumed {
-		txDependency := NewUnconfirmedTxDependency(dependencyTxID)
-		txDependency.AddDependency(dependentTxID)
-		cachedDependency := storage.StoreUnconfirmedTransactionDependencies(txDependency)
-		if cachedDependency == nil {
-			return errors.Errorf("failed to store dependency, txID: %s", dependentTxID)
-		}
-		cachedDependency.Release()
+	if cachedDependencies := storage.UnconfirmedTransactionDependencies(dependencyTxID); cachedDependencies != nil {
+		cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
+			unconfirmedTxDependency.AddDependency(dependentTxID)
+		})
+		return nil
 	}
+	txDependency := NewUnconfirmedTxDependency(dependencyTxID)
+	txDependency.AddDependency(dependentTxID)
+	cachedDependency := storage.StoreUnconfirmedTransactionDependencies(txDependency)
+	if cachedDependency == nil {
+		return errors.Errorf("failed to store dependency, txID: %s", dependentTxID)
+	}
+	cachedDependency.Release()
+
 	return nil
 }
 
