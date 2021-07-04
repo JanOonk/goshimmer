@@ -41,7 +41,6 @@ func TestDependenciesConfirmed(t *testing.T) {
 func TestDataMessageAlwaysEligible(t *testing.T) {
 	tangle := newTestTangle()
 	defer tangle.Shutdown()
-	tangle.EligibilityManager.Setup()
 
 	message := newTestDataMessage("data")
 	tangle.Storage.StoreMessage(message)
