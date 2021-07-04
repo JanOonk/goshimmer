@@ -1,9 +1,12 @@
 package tangle
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/mock"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/iotaledger/goshimmer/packages/ledgerstate"
 
@@ -24,6 +27,9 @@ func TestDependenciesConfirmed(t *testing.T) {
 
 	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
 	assert.False(t, isEligibleFlag)
+
+	// reset mock, since calls can't be overridden
+	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
 
 	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Confirmed)
 	isEligibleFlag = runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
