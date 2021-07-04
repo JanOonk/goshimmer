@@ -71,6 +71,29 @@ func TestDependencyDirectApproval(t *testing.T) {
 	assert.True(t, isEligibleFlag)
 }
 
+func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
+	tangle := newTestTangle()
+	defer tangle.Shutdown()
+	wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID := setupEligibilityTests(t, tangle)
+	scenarioMessagesApproveEmptyID(t, tangle, wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID)
+
+	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
+	tangle.LedgerState.UTXODAG = mockUTXO
+	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Pending)
+
+	messageID := messages["1"].ID()
+	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messageID)
+	assert.False(t, isEligibleFlag)
+
+	txID := transactions["0"].ID()
+	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&txID)
+
+	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.True(t, isEligibleFlag)
+}
+
 func setupEligibilityTests(t *testing.T, tangle *Tangle) (map[string]wallet, map[ledgerstate.Address]wallet, map[string]*Message, map[string]*ledgerstate.Transaction, map[string]*ledgerstate.UTXOInput, map[string]*ledgerstate.SigLockedSingleOutput, map[ledgerstate.OutputID]ledgerstate.Output) {
 	tangle.EligibilityManager.Setup()
 
