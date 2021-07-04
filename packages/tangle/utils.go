@@ -97,7 +97,7 @@ func (u *Utils) AllTransactionsDirectlyApprovedByMessages(transactionIDs ledgers
 
 	for _, messageID := range messageIDs {
 		for transactionID := range transactionIDs {
-			if u.TransactionApprovedByMessage(transactionID, messageID) {
+			if u.transactionDirectlyApprovedByMessage(transactionID, messageID) {
 				delete(transactionIDs, transactionID)
 			}
 		}
@@ -138,7 +138,6 @@ func (u *Utils) transactionDirectlyApprovedByMessage(transactionID ledgerstate.T
 					approved = true
 					return
 				}
-
 			}
 		})
 		if approved {
