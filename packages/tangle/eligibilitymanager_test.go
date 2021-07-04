@@ -123,6 +123,7 @@ func setupEligibilityTests(t *testing.T, tangle *Tangle) (map[string]wallet, map
 	stored, _, _ = tangle.LedgerState.UTXODAG.StoreTransaction(transactions["0"])
 	assert.True(t, stored)
 	tangle.Storage.StoreMessage(messages["0"])
+	tangle.Storage.StoreAttachment(transactions["0"].ID(), messages["0"].ID())
 
 	return wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID
 }
@@ -164,6 +165,9 @@ func scenarioMessagesApproveDependency(t *testing.T, tangle *Tangle, wallets map
 
 	tangle.Storage.StoreMessage(messages["1"])
 	stored, _, _ := tangle.LedgerState.UTXODAG.StoreTransaction(transactions["1"])
+	assert.True(t, stored)
+
+	_, stored = tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
 	assert.True(t, stored)
 
 	return
