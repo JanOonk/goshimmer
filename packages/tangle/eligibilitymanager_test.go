@@ -75,17 +75,22 @@ func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
 	tangle := newTestTangle()
 	defer tangle.Shutdown()
 	wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID := setupEligibilityTests(t, tangle)
+	txID := transactions["0"].ID()
+
 	scenarioMessagesApproveEmptyID(t, tangle, wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID)
 
 	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
 	tangle.LedgerState.UTXODAG = mockUTXO
-	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Pending)
+	mockUTXO.On("InclusionState", txID).Return(ledgerstate.Pending)
 
 	messageID := messages["1"].ID()
 	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messageID)
 	assert.False(t, isEligibleFlag)
 
-	txID := transactions["0"].ID()
+	// reset mock, since calls can't be overridden
+	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
+	mockUTXO.On("InclusionState", txID).Return(ledgerstate.Confirmed)
+
 	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&txID)
 
 	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
@@ -175,6 +180,10 @@ func scenarioMessagesApproveEmptyID(t *testing.T, tangle *Tangle, wallets map[st
 	tangle.Storage.StoreMessage(messages["1"])
 	stored, _, _ := tangle.LedgerState.UTXODAG.StoreTransaction(transactions["1"])
 	assert.True(t, stored)
+
+	attachment, stored := tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
+	assert.True(t, stored)
+	attachment.Release()
 
 	return
 }
