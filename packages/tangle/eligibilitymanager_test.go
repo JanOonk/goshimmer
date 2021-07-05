@@ -99,6 +99,47 @@ func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
 	assert.True(t, isEligibleFlag)
 }
 
+func TestDoNotUpdateEligibilityAfterPartialDependencyConfirmation(t *testing.T) {
+	tangle := newTestTangle()
+	defer tangle.Shutdown()
+	wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID := setupEligibilityTests(t, tangle)
+
+	scenarioMoreThanOneDependency(t, tangle, wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID)
+
+	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
+	tangle.LedgerState.UTXODAG = mockUTXO
+	tx1ID := transactions["1"].ID()
+	tx2ID := transactions["2"].ID()
+	mockUTXO.On("InclusionState", tx1ID).Return(ledgerstate.Pending)
+	mockUTXO.On("InclusionState", tx2ID).Return(ledgerstate.Pending)
+
+	messageID := messages["3"].ID()
+	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messageID)
+	assert.False(t, isEligibleFlag)
+
+	// reset mock, since calls can't be overridden
+	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
+	mockUTXO.On("InclusionState", tx1ID).Return(ledgerstate.Confirmed)
+	mockUTXO.On("InclusionState", tx2ID).Return(ledgerstate.Pending)
+
+	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx1ID)
+	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.False(t, isEligibleFlag)
+
+	// reset mock, since calls can't be overridden
+	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
+	mockUTXO.On("InclusionState", tx1ID).Return(ledgerstate.Confirmed)
+	mockUTXO.On("InclusionState", tx2ID).Return(ledgerstate.Confirmed)
+
+	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx2ID)
+	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.True(t, isEligibleFlag)
+}
+
 func setupEligibilityTests(t *testing.T, tangle *Tangle) (map[string]wallet, map[ledgerstate.Address]wallet, map[string]*Message, map[string]*ledgerstate.Transaction, map[string]*ledgerstate.UTXOInput, map[string]*ledgerstate.SigLockedSingleOutput, map[ledgerstate.OutputID]ledgerstate.Output) {
 	tangle.EligibilityManager.Setup()
 
@@ -240,11 +281,20 @@ func scenarioMoreThanOneDependency(t *testing.T, tangle *Tangle, wallets map[str
 	tangle.Storage.StoreMessage(messages["1"])
 	stored, _, _ := tangle.LedgerState.UTXODAG.StoreTransaction(transactions["1"])
 	assert.True(t, stored)
+	attachment, stored := tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
+	attachment.Release()
+	assert.True(t, stored)
 	tangle.Storage.StoreMessage(messages["3"])
 	stored, _, _ = tangle.LedgerState.UTXODAG.StoreTransaction(transactions["3"])
 	assert.True(t, stored)
+	attachment, stored = tangle.Storage.StoreAttachment(transactions["3"].ID(), messages["3"].ID())
+	attachment.Release()
+	assert.True(t, stored)
 	tangle.Storage.StoreMessage(messages["2"])
 	stored, _, _ = tangle.LedgerState.UTXODAG.StoreTransaction(transactions["2"])
+	assert.True(t, stored)
+	attachment, stored = tangle.Storage.StoreAttachment(transactions["2"].ID(), messages["2"].ID())
+	attachment.Release()
 	assert.True(t, stored)
 
 	return
