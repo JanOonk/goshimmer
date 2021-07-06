@@ -1192,7 +1192,7 @@ func (u *UnconfirmedTxDependency) DeleteDependency(txID ledgerstate.TransactionI
 }
 
 func (u *UnconfirmedTxDependency) Update(other objectstorage.StorableObject) {
-	panic("implement me")
+	panic("UnconfirmedTxDependency shouldn't be updated this way")
 }
 
 func (u *UnconfirmedTxDependency) ObjectStorageKey() []byte {
@@ -1221,16 +1221,6 @@ func (u *UnconfirmedTxDependency) ObjectStorageValue() []byte {
 // accessor methods with a type-casted one.
 type CachedUnconfirmedTxDependency struct {
 	objectstorage.CachedObject
-}
-
-// TODO what for?
-// ID returns the dependency transactionID of the UnconfirmedTxDependency.
-func (c *CachedUnconfirmedTxDependency) ID() (id ledgerstate.TransactionID) {
-	id, _, err := ledgerstate.TransactionIDFromBytes(c.Key())
-	if err != nil {
-		panic(err)
-	}
-	return
 }
 
 // Retain marks the CachedObject to still be in use by the program.
