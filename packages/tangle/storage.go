@@ -240,15 +240,11 @@ func (s *Storage) StoreUnconfirmedTransactionDependencies(dependencies *Unconfir
 }
 
 // UnconfirmedTransactionDependencies gets the CachedUnconfirmedTransactionDependencies from the objectStorage that matches provided transactionID
-func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (matchedCachedDependencies *CachedUnconfirmedTxDependency) {
-	s.unconfirmedTxDependenciesStorage.ForEach(func(key []byte, cachedObject objectstorage.CachedObject) bool {
-		cachedDependencies := CachedUnconfirmedTxDependency{CachedObject: cachedObject}
-		if cachedDependencies.ID() == *transactionID {
-			matchedCachedDependencies = &cachedDependencies
-			return false
-		}
-		return true
-	})
+func (s *Storage) UnconfirmedTransactionDependencies(transactionID *ledgerstate.TransactionID) (cachedDependencies *CachedUnconfirmedTxDependency) {
+	cachedObject := s.unconfirmedTxDependenciesStorage.Get(transactionID.Bytes())
+	if !typeutils.IsInterfaceNil(cachedObject) {
+		cachedDependencies = &CachedUnconfirmedTxDependency{CachedObject: cachedObject}
+	}
 	return
 }
 
@@ -1227,7 +1223,7 @@ type CachedUnconfirmedTxDependency struct {
 	objectstorage.CachedObject
 }
 
-//TODO what for?
+// TODO what for?
 // ID returns the dependency transactionID of the UnconfirmedTxDependency.
 func (c *CachedUnconfirmedTxDependency) ID() (id ledgerstate.TransactionID) {
 	id, _, err := ledgerstate.TransactionIDFromBytes(c.Key())
