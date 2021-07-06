@@ -148,7 +148,6 @@ func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(depend
 		if len(pendingDependencies) == 0 {
 			e.makeAttachmentsEligible(dependentTx)
 		}
-
 	}
 	return nil
 }
