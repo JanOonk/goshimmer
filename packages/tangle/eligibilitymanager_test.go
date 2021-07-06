@@ -324,8 +324,22 @@ func scenarioMoreThanOneDependentTransaction(t *testing.T, tangle *Tangle, walle
 	tangle.Storage.StoreMessage(messages["1"])
 	stored, _, _ := tangle.LedgerState.UTXODAG.StoreTransaction(transactions["1"])
 	assert.True(t, stored)
+	attachment, stored := tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
+	attachment.Release()
+	assert.True(t, stored)
+
 	tangle.Storage.StoreMessage(messages["2"])
 	stored, _, _ = tangle.LedgerState.UTXODAG.StoreTransaction(transactions["2"])
+	assert.True(t, stored)
+	attachment, stored = tangle.Storage.StoreAttachment(transactions["2"].ID(), messages["2"].ID())
+	attachment.Release()
+	assert.True(t, stored)
+
+	tangle.Storage.StoreMessage(messages["3"])
+	stored, _, _ = tangle.LedgerState.UTXODAG.StoreTransaction(transactions["3"])
+	assert.True(t, stored)
+	attachment, stored = tangle.Storage.StoreAttachment(transactions["3"].ID(), messages["3"].ID())
+	attachment.Release()
 	assert.True(t, stored)
 
 	return

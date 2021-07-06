@@ -126,19 +126,18 @@ func (e *EligibilityManager) Setup() {
 // can be set to eligible
 func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(dependencyTxID *ledgerstate.TransactionID) interface{} {
 	// get all txID dependent on this transactionID
-	cachedDependencies := e.tangle.Storage.UnconfirmedTransactionDependencies(dependencyTxID)
-
-	// tx that need to be checked for the eligibility after one of dependency has been confirmed
-	dependentTxs := make([]*ledgerstate.Transaction, 0)
-	cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
-		// get tx from storage
-		for txID := range unconfirmedTxDependency.dependentTxIDs {
-			e.tangle.LedgerState.Transaction(txID).Consume(func(tx *ledgerstate.Transaction) {
-				dependentTxs = append(dependentTxs, tx)
-			})
-		}
-	})
-	e.tangle.Storage.deleteUnconfirmedTxDependencies(dependencyTxID)
+	if cachedDependencies := e.tangle.Storage.UnconfirmedTransactionDependencies(dependencyTxID); cachedDependencies != nil {
+		// tx that need to be checked for the eligibility after one of dependency has been confirmed
+		cachedDependencies.Consume(func(unconfirmedTxDependency *UnconfirmedTxDependency) {
+			// get tx from storage
+			for txID := range unconfirmedTxDependency.dependentTxIDs {
+				e.tangle.LedgerState.Transaction(txID).Consume(func(tx *ledgerstate.Transaction) {
+					dependentTxs = append(dependentTxs, tx)
+				})
+			}
+		})
+		e.tangle.Storage.deleteUnconfirmedTxDependencies(dependencyTxID)
+	}
 
 	for _, dependentTx := range dependentTxs {
 		pendingDependencies, err := e.obtainPendingDependencies(dependentTx)
