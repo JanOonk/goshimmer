@@ -121,7 +121,8 @@ func TestDoNotUpdateEligibilityAfterPartialDependencyConfirmation(t *testing.T) 
 	mockUTXO.On("InclusionState", tx1ID).Return(ledgerstate.Confirmed)
 	mockUTXO.On("InclusionState", tx2ID).Return(ledgerstate.Pending)
 
-	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx1ID)
+	err := tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx1ID)
+	assert.NoError(t, err)
 	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
 		isEligibleFlag = messageMetadata.IsEligible()
 	})
@@ -132,7 +133,8 @@ func TestDoNotUpdateEligibilityAfterPartialDependencyConfirmation(t *testing.T) 
 	mockUTXO.On("InclusionState", tx1ID).Return(ledgerstate.Confirmed)
 	mockUTXO.On("InclusionState", tx2ID).Return(ledgerstate.Confirmed)
 
-	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx2ID)
+	err = tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx2ID)
+	assert.NoError(t, err)
 	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
 		isEligibleFlag = messageMetadata.IsEligible()
 	})
