@@ -4,19 +4,22 @@ import (
 	"sync"
 
 	"github.com/cockroachdb/errors"
-	"github.com/iotaledger/goshimmer/packages/ledgerstate"
 	"github.com/iotaledger/hive.go/byteutils"
 	"github.com/iotaledger/hive.go/events"
 	"github.com/iotaledger/hive.go/marshalutil"
 	"github.com/iotaledger/hive.go/objectstorage"
+
+	"github.com/iotaledger/goshimmer/packages/ledgerstate"
 )
 
+// EligibilityEvents contain all events that can be triggered by the manager
 type EligibilityEvents struct {
 	// MessageEligible is triggered when message eligible flag is set to true
 	MessageEligible *events.Event
 	Error           *events.Event
 }
 
+// EligibilityManager manages when tips become eligible and handle the persistence of the status
 type EligibilityManager struct {
 	Events *EligibilityEvents
 
@@ -24,6 +27,7 @@ type EligibilityManager struct {
 	storageMutex sync.Mutex
 }
 
+// NewEligibilityManager creates a new eligibility manager ready to trigger events
 func NewEligibilityManager(tangle *Tangle) (eligibilityManager *EligibilityManager) {
 	eligibilityManager = &EligibilityManager{
 		Events: &EligibilityEvents{
