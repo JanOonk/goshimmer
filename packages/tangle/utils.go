@@ -115,24 +115,8 @@ func (u *Utils) transactionDirectlyApprovedByMessage(transactionID ledgerstate.T
 			return true
 		}
 
-		var attachmentBooked bool
-		u.tangle.Storage.MessageMetadata(attachmentMessageID).Consume(func(attachmentMetadata *MessageMetadata) {
-			attachmentBooked = attachmentMetadata.IsBooked()
-		})
-		if !attachmentBooked {
-			continue
-		}
-
 		u.tangle.Storage.Message(messageID).Consume(func(message *Message) {
 			for _, parentID := range message.Parents() {
-				var parentBooked bool
-				u.tangle.Storage.MessageMetadata(parentID).Consume(func(parentMetadata *MessageMetadata) {
-					parentBooked = parentMetadata.IsBooked()
-				})
-				if !parentBooked {
-					continue
-				}
-
 				// First check all of the parents to avoid unnecessary checks and possible walking.
 				if attachmentMessageID == parentID {
 					approved = true
@@ -141,11 +125,11 @@ func (u *Utils) transactionDirectlyApprovedByMessage(transactionID ledgerstate.T
 			}
 		})
 		if approved {
-			return
+			return true
 		}
 	}
 
-	return
+	return approved
 }
 
 // AllTransactionsApprovedByMessages checks if all Transactions were attached by at least one Message that was directly
