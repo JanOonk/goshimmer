@@ -96,13 +96,15 @@ func TransactionIDFromMarshalUtil(marshalUtil *marshalutil.MarshalUtil) (transac
 	return
 }
 
+// TransactionIDsFromMarshalUtil unmarshals TransactionIDs using a MarshalUtil (for easier unmarshaling).
 func TransactionIDsFromMarshalUtil(marshalUtil *marshalutil.MarshalUtil) (transactionIDs TransactionIDs, err error) {
-	transactionIDs = make(TransactionIDs, 0)
+	transactionIDs = make(TransactionIDs)
 	for !marshalUtil.DoneReading() {
-		transactionID, err2 := TransactionIDFromMarshalUtil(marshalUtil)
-		if err2 != nil {
-			err2 = errors.Errorf("failed to parse TransactionIDs: %w", err)
-			return
+		var transactionID TransactionID
+		transactionID, err = TransactionIDFromMarshalUtil(marshalUtil)
+		if err != nil {
+			err = errors.Errorf("failed to parse TransactionIDs: %w", err)
+			return nil, err
 		}
 		transactionIDs[transactionID] = types.Void
 	}
