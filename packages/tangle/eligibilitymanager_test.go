@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iotaledger/hive.go/events"
+
 	"github.com/stretchr/testify/mock"
 
 	"github.com/stretchr/testify/assert"
@@ -14,26 +16,32 @@ import (
 )
 
 func TestDependenciesConfirmed(t *testing.T) {
+	eligibleEventTriggered := false
 	tangle := newTestTangle()
 	defer tangle.Shutdown()
 	wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID := setupEligibilityTests(t, tangle)
 	scenarioMessagesApproveEmptyID(t, tangle, wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID)
+
+	tangle.EligibilityManager.Events.MessageEligible.Attach(events.NewClosure(func(messageID MessageID) {
+		assert.Equal(t, messages["1"].ID(), messageID)
+		eligibleEventTriggered = true
+	}))
 
 	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
 	tangle.LedgerState.UTXODAG = mockUTXO
 	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Pending)
 
 	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
-	assert.False(t, isEligibleFlag)
+	assert.False(t, isEligibleFlag, "Message 1 shouldn't be eligible")
 
 	// reset mock, since calls can't be overridden
 	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
 
 	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Confirmed)
 	isEligibleFlag = runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
-	assert.True(t, isEligibleFlag)
+	assert.True(t, isEligibleFlag, "Message 1 isn't eligible")
 
-	// TODO check if event message eligible was triggered
+	assert.True(t, eligibleEventTriggered, "Eligibility event wasn't triggered")
 }
 
 func TestDataMessageAlwaysEligible(t *testing.T) {
@@ -46,11 +54,11 @@ func TestDataMessageAlwaysEligible(t *testing.T) {
 	err := tangle.EligibilityManager.checkEligibility(message.ID())
 	assert.NoError(t, err)
 
-	var eligibilityResult1 bool
+	var eligibilityResult bool
 	tangle.Storage.MessageMetadata(message.ID()).Consume(func(messageMetadata *MessageMetadata) {
-		eligibilityResult1 = messageMetadata.IsEligible()
+		eligibilityResult = messageMetadata.IsEligible()
 	})
-	assert.True(t, eligibilityResult1)
+	assert.True(t, eligibilityResult, "Data messages should awlays be eligible")
 }
 
 func TestDependencyDirectApproval(t *testing.T) {
@@ -66,7 +74,7 @@ func TestDependencyDirectApproval(t *testing.T) {
 	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Pending)
 
 	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
-	assert.True(t, isEligibleFlag)
+	assert.True(t, isEligibleFlag, "Message 1 isn't eligible")
 }
 
 func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
@@ -74,8 +82,14 @@ func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
 	defer tangle.Shutdown()
 	wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID := setupEligibilityTests(t, tangle)
 	txID := transactions["0"].ID()
+	eligibleEventTriggered := false
 
 	scenarioMessagesApproveEmptyID(t, tangle, wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID)
+
+	tangle.EligibilityManager.Events.MessageEligible.Attach(events.NewClosure(func(messageID MessageID) {
+		assert.Equal(t, messages["1"].ID(), messageID)
+		eligibleEventTriggered = true
+	}))
 
 	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
 	tangle.LedgerState.UTXODAG = mockUTXO
@@ -83,7 +97,7 @@ func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
 
 	messageID := messages["1"].ID()
 	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messageID)
-	assert.False(t, isEligibleFlag)
+	assert.False(t, isEligibleFlag, "Message 1 shouldn't be eligible")
 
 	// reset mock, since calls can't be overridden
 	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
@@ -95,7 +109,9 @@ func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
 	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
 		isEligibleFlag = messageMetadata.IsEligible()
 	})
-	assert.True(t, isEligibleFlag)
+	assert.True(t, isEligibleFlag, "Message 1 isn't eligible")
+
+	assert.True(t, eligibleEventTriggered, "eligibility event wasn't triggered")
 }
 
 func TestDoNotUpdateEligibilityAfterPartialDependencyConfirmation(t *testing.T) {
@@ -175,7 +191,7 @@ func TestConfirmationMakeEligibleOneOfDependentTransaction(t *testing.T) {
 	tangle.Storage.MessageMetadata(messages["2"].ID()).Consume(func(messageMetadata *MessageMetadata) {
 		isEligibleFlag = messageMetadata.IsEligible()
 	})
-	assert.True(t, isEligibleFlag)
+	assert.True(t, isEligibleFlag, "Message 1 isn't eligible")
 
 	// reset mock, since calls can't be overridden
 	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
@@ -282,8 +298,6 @@ func scenarioMessagesApproveEmptyID(t *testing.T, tangle *Tangle, wallets map[st
 	attachment, stored := tangle.Storage.StoreAttachment(transactions["1"].ID(), messages["1"].ID())
 	assert.True(t, stored)
 	attachment.Release()
-
-	return
 }
 
 // creates tx and msg 1 that directly approves msg 0 and uses tx0 outputs as its inputs
@@ -353,8 +367,6 @@ func scenarioMoreThanOneDependency(t *testing.T, tangle *Tangle, wallets map[str
 	attachment, stored = tangle.Storage.StoreAttachment(transactions["2"].ID(), messages["2"].ID())
 	attachment.Release()
 	assert.True(t, stored)
-
-	return
 }
 
 // two transactions 1 and 2 are dependent on the same transaction 0 and are not connected by direct approval between messages
@@ -407,6 +419,4 @@ func scenarioMoreThanOneDependentTransaction(t *testing.T, tangle *Tangle, walle
 	attachment, stored = tangle.Storage.StoreAttachment(transactions["3"].ID(), messages["3"].ID())
 	attachment.Release()
 	assert.True(t, stored)
-
-	return
 }
