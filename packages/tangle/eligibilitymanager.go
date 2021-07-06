@@ -124,7 +124,8 @@ func (e *EligibilityManager) Setup() {
 // updateEligibilityAfterDependencyConfirmation triggered on transaction confirmation event
 // remove unconfirmed dependency from object storage and checks if any of dependent transactions
 // can be set to eligible
-func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(dependencyTxID *ledgerstate.TransactionID) interface{} {
+func (e *EligibilityManager) updateEligibilityAfterDependencyConfirmation(dependencyTxID *ledgerstate.TransactionID) error {
+	dependentTxs := make([]*ledgerstate.Transaction, 0)
 	// get all txID dependent on this transactionID
 	if cachedDependencies := e.tangle.Storage.UnconfirmedTransactionDependencies(dependencyTxID); cachedDependencies != nil {
 		// tx that need to be checked for the eligibility after one of dependency has been confirmed

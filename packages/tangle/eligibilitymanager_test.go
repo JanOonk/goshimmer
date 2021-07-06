@@ -13,8 +13,6 @@ import (
 	"github.com/iotaledger/hive.go/identity"
 )
 
-// TODO think where to check also the other function
-
 func TestDependenciesConfirmed(t *testing.T) {
 	tangle := newTestTangle()
 	defer tangle.Shutdown()
@@ -91,7 +89,8 @@ func TestUpdateEligibilityAfterDependencyConfirmation(t *testing.T) {
 	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
 	mockUTXO.On("InclusionState", txID).Return(ledgerstate.Confirmed)
 
-	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&txID)
+	err := tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&txID)
+	assert.NoError(t, err)
 
 	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
 		isEligibleFlag = messageMetadata.IsEligible()
@@ -135,6 +134,62 @@ func TestDoNotUpdateEligibilityAfterPartialDependencyConfirmation(t *testing.T) 
 
 	tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&tx2ID)
 	tangle.Storage.MessageMetadata(messageID).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.True(t, isEligibleFlag)
+}
+
+func TestConfirmationMakeEligibleOneOfDependentTransaction(t *testing.T) {
+	tangle := newTestTangle()
+	defer tangle.Shutdown()
+	wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID := setupEligibilityTests(t, tangle)
+	scenarioMoreThanOneDependentTransaction(t, tangle, wallets, walletsByAddress, messages, transactions, inputs, outputs, outputsByID)
+
+	mockUTXO := ledgerstate.NewUtxoDagMock(t, tangle.LedgerState.UTXODAG)
+	tangle.LedgerState.UTXODAG = mockUTXO
+	mockUTXO.On("InclusionState", transactions["3"].ID()).Return(ledgerstate.Pending)
+	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Pending)
+
+	isEligibleFlag := runCheckEligibilityAndGetEligibility(t, tangle, messages["1"].ID())
+	assert.False(t, isEligibleFlag)
+
+	isEligibleFlag = runCheckEligibilityAndGetEligibility(t, tangle, messages["2"].ID())
+	assert.False(t, isEligibleFlag)
+
+	// reset mock, since calls can't be overridden
+	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
+	mockUTXO.On("InclusionState", transactions["3"].ID()).Return(ledgerstate.Pending)
+	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Confirmed)
+
+	confirmedTransactionID := transactions["0"].ID()
+
+	err := tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&confirmedTransactionID)
+	assert.NoError(t, err)
+
+	tangle.Storage.MessageMetadata(messages["1"].ID()).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.False(t, isEligibleFlag)
+	tangle.Storage.MessageMetadata(messages["2"].ID()).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.True(t, isEligibleFlag)
+
+	// reset mock, since calls can't be overridden
+	mockUTXO.ExpectedCalls = make([]*mock.Call, 0)
+	mockUTXO.On("InclusionState", transactions["3"].ID()).Return(ledgerstate.Confirmed)
+	mockUTXO.On("InclusionState", transactions["0"].ID()).Return(ledgerstate.Confirmed)
+
+	confirmedTransactionID = transactions["3"].ID()
+
+	err = tangle.EligibilityManager.updateEligibilityAfterDependencyConfirmation(&confirmedTransactionID)
+	assert.NoError(t, err)
+
+	tangle.Storage.MessageMetadata(messages["1"].ID()).Consume(func(messageMetadata *MessageMetadata) {
+		isEligibleFlag = messageMetadata.IsEligible()
+	})
+	assert.True(t, isEligibleFlag)
+	tangle.Storage.MessageMetadata(messages["2"].ID()).Consume(func(messageMetadata *MessageMetadata) {
 		isEligibleFlag = messageMetadata.IsEligible()
 	})
 	assert.True(t, isEligibleFlag)
@@ -301,15 +356,24 @@ func scenarioMoreThanOneDependency(t *testing.T, tangle *Tangle, wallets map[str
 }
 
 // two transactions 1 and 2 are dependent on the same transaction 0 and are not connected by direct approval between messages
+// transaction is also dependent on other transaction 3 that will get confirmed before 0
 func scenarioMoreThanOneDependentTransaction(t *testing.T, tangle *Tangle, wallets map[string]wallet, walletsByAddress map[ledgerstate.Address]wallet, messages map[string]*Message, transactions map[string]*ledgerstate.Transaction, inputs map[string]*ledgerstate.UTXOInput, outputs map[string]*ledgerstate.SigLockedSingleOutput, outputsByID map[ledgerstate.OutputID]ledgerstate.Output) {
+	// transaction 3
+	inputs["3B"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["0"].ID(), selectIndex(transactions["0"], wallets["B"])))
+	outputsByID[inputs["3B"].ReferencedOutputID()] = ledgerstate.NewOutputs(outputs["0B"])[0]
+	outputs["3E"] = ledgerstate.NewSigLockedSingleOutput(2, wallets["E"].address)
+
+	transactions["3"] = makeTransaction(ledgerstate.NewInputs(inputs["3B"]), ledgerstate.NewOutputs(outputs["3E"]), outputsByID, walletsByAddress)
+	messages["3"] = newTestParentsPayloadMessage(transactions["3"], []MessageID{EmptyMessageID}, []MessageID{})
+
 	// transaction 1
 	inputs["1A"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["0"].ID(), selectIndex(transactions["0"], wallets["A"])))
 	outputsByID[inputs["1A"].ReferencedOutputID()] = ledgerstate.NewOutputs(outputs["0A"])[0]
-	inputs["1B"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["0"].ID(), selectIndex(transactions["0"], wallets["B"])))
-	outputsByID[inputs["1B"].ReferencedOutputID()] = ledgerstate.NewOutputs(outputs["0B"])[0]
+	inputs["1E"] = ledgerstate.NewUTXOInput(ledgerstate.NewOutputID(transactions["3"].ID(), selectIndex(transactions["3"], wallets["E"])))
+	outputsByID[inputs["1E"].ReferencedOutputID()] = ledgerstate.NewOutputs(outputs["3E"])[0]
 	outputs["1D"] = ledgerstate.NewSigLockedSingleOutput(2, wallets["D"].address)
 
-	transactions["1"] = makeTransaction(ledgerstate.NewInputs(inputs["1A"], inputs["1B"]), ledgerstate.NewOutputs(outputs["1D"]), outputsByID, walletsByAddress)
+	transactions["1"] = makeTransaction(ledgerstate.NewInputs(inputs["1A"], inputs["1E"]), ledgerstate.NewOutputs(outputs["1D"]), outputsByID, walletsByAddress)
 	messages["1"] = newTestParentsPayloadMessage(transactions["1"], []MessageID{EmptyMessageID}, []MessageID{})
 
 	// transaction 2
